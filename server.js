@@ -499,46 +499,32 @@ RULES:
       console.warn("Skipping parallel image fetch...", e);
     }
 
-    let response;
-    try {
-      // 2. Attempt raw visual injection! Pass all fetched real product images directly into the generative model along with the base room and text.
-      response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [
-            { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
-            ...rawProductParts,
-            { text: prompt + "\nCRITICAL: Refer strictly to the provided visual product images to draw the literal exact furniture items." },
-          ],
-        },
-      });
-    } catch (e) {
-      // 3. FALLBACK: If the Image generation endpoint literally Rejects multiple images (API constraint), 
-      // we immediately use the 3.1 Pro Elite Vision model to synthesize the arrays of images into a masterful physical description bridging text+pixels.
-      console.log("Raw Multi-Image array rejected by Image generator model. Falling back to Elite Parallel Vision Synth...");
-      
-      let elitePrompt = prompt;
-      if (rawProductParts.length > 0) {
+    let elitePrompt = prompt;
+    if (rawProductParts.length > 0) {
+      console.log(`Running lightning-fast parallel vision synth on ${rawProductParts.length} products...`);
+      try {
         const visionSynth = await ai.models.generateContent({
-          model: 'gemini-3.1-pro-preview',
+          model: 'gemini-2.5-flash',
           contents: [
             ...rawProductParts,
-            { text: `Analyze these ${rawProductParts.length} real product images. Write an extremely precise, literal, physical description of exactly how to render these specific items mathematically (textures, colors, geometries, unique identifiers). Output ONLY the physical integration directives.` }
+            { text: `Analyze these ${rawProductParts.length} real product images. Write an extremely precise, literal, physical description of exactly how to render these specific items mathematically (textures, colors, geometries, unique identifiers) inside a ${style} ${roomType}. Output ONLY the physical integration directives.` }
           ]
         });
-        elitePrompt += `\n\nELITE PHYSICAL DIRECTIVES (Follow precisely):\n${visionSynth.text}`;
+        elitePrompt += `\n\nCRITICAL PHYSICAL DIRECTIVES FOR THE OBJECTS (Follow precisely):\n${visionSynth.text}`;
+      } catch (err) {
+        console.warn("Vision Synth skipped due to error:", err.message);
       }
-
-      response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: {
-          parts: [
-            { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
-            { text: elitePrompt },
-          ],
-        },
-      });
     }
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [
+          { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
+          { text: elitePrompt },
+        ],
+      },
+    });
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
