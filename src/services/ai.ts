@@ -6,6 +6,7 @@ export interface ProductItem {
   imageUrl: string;
   category: string;
   reason: string;
+  coordinates?: { x: number, y: number };
 }
 
 const getHeaders = () => {
@@ -127,4 +128,18 @@ export async function getSavedDesigns() {
     headers: getHeaders()
   });
   return handleResponse(response);
+}
+
+export async function locateProductsInImage(
+  base64Image: string,
+  mimeType: string,
+  products: (ProductItem & { id?: number })[]
+): Promise<{ coordinates: { productId: number; x: number; y: number }[] }> {
+  const response = await fetch('/api/locate-products', {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ base64Image, mimeType, products: products.map((p, i) => ({ id: p.id ?? i, name: p.name, category: p.category })) })
+  });
+  const data = await handleResponse(response);
+  return data;
 }

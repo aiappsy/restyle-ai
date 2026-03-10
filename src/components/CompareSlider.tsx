@@ -5,9 +5,11 @@ interface CompareSliderProps {
   originalImage: string;
   generatedImage: string;
   onExpand?: () => void;
+  hotspots?: { id: number, x: number, y: number, name: string }[];
+  onHotspotClick?: (id: number) => void;
 }
 
-export default function CompareSlider({ originalImage, generatedImage, onExpand }: CompareSliderProps) {
+export default function CompareSlider({ originalImage, generatedImage, onExpand, hotspots, onHotspotClick }: CompareSliderProps) {
   const [position, setPosition] = useState(50);
   const [mouseDownPos, setMouseDownPos] = useState({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
@@ -88,6 +90,24 @@ export default function CompareSlider({ originalImage, generatedImage, onExpand 
           alt="Generated Room Design" 
           className="absolute inset-0 w-full h-full object-cover" 
         />
+        {hotspots?.map((hotspot, idx) => (
+          <div
+            key={idx}
+            className="absolute z-30 pointer-events-auto group/hotspot transform -translate-x-1/2 -translate-y-1/2 cursor-pointer"
+            style={{ left: `${hotspot.x}%`, top: `${hotspot.y}%` }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onHotspotClick?.(hotspot.id);
+            }}
+          >
+            <div className="w-8 h-8 bg-white/95 backdrop-blur-sm rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.7)] border-2 border-indigo-500 animate-[pulse_2s_ease-in-out_infinite] transition-all hover:scale-125">
+               <div className="w-2.5 h-2.5 bg-indigo-600 rounded-full" />
+            </div>
+            <div className="absolute top-10 left-1/2 -translate-x-1/2 bg-gray-900/95 backdrop-blur-sm text-white text-xs font-bold py-2 px-3 rounded-lg opacity-0 group-hover/hotspot:opacity-100 transition-opacity whitespace-nowrap shadow-xl pointer-events-none border border-gray-700">
+              View {hotspot.name}
+            </div>
+          </div>
+        ))}
       </div>
       <div 
         className="absolute top-0 bottom-0 w-1 bg-white/80 pointer-events-none" 

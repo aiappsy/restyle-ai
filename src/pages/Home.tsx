@@ -4,7 +4,7 @@ import { Upload, Image as ImageIcon, Download, Printer, Wand2, RefreshCw, Chevro
 import CompareSlider from '../components/CompareSlider';
 import StyleSelector, { STYLES } from '../components/StyleSelector';
 import AdminModal from '../components/AdminModal';
-import { generateRoomDesign, generateShoppingList, ProductItem, sendChatMessage, regenerateWithProducts, generateSpeech, saveDesign } from '../services/ai';
+import { generateRoomDesign, generateShoppingList, ProductItem, sendChatMessage, regenerateWithProducts, generateSpeech, saveDesign, locateProductsInImage } from '../services/ai';
 import { useAuth } from '../contexts/AuthContext';
 
 const ROOM_TYPES = ['Living Room', 'Bedroom', 'Dining Room', 'Home Office', 'Bathroom', 'Kitchen'];
@@ -57,6 +57,7 @@ export default function Home() {
   const [hasSourcedProducts, setHasSourcedProducts] = useState(false);
   const [isRegeneratingWithProducts, setIsRegeneratingWithProducts] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'shop'>('shop');
+  const [activeProductId, setActiveProductId] = useState<number | null>(null);
 
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -337,6 +338,23 @@ export default function Home() {
         products
       );
       setGeneratedImage(newImage);
+
+      try {
+        setLoadingState('Adding interactive design hotspots...');
+        const locResponse = await locateProductsInImage(newImage, 'image/png', products);
+        if (locResponse && locResponse.coordinates) {
+          const updatedProducts = [...products];
+          locResponse.coordinates.forEach(coord => {
+            if (updatedProducts[coord.productId]) {
+               updatedProducts[coord.productId].coordinates = { x: coord.x, y: coord.y };
+            }
+          });
+          setShoppingList(updatedProducts);
+        }
+      } catch (e) {
+        console.error("Failed to map hotspots", e);
+      }
+
       setStep(4);
     } catch (error) {
       console.error("Pipeline failed:", error);
@@ -365,6 +383,20 @@ export default function Home() {
         productsToUse
       );
       setGeneratedImage(newImage);
+      try {
+        const locResponse = await locateProductsInImage(newImage, 'image/png', shoppingList.filter((_, idx) => selectedProductsToRegenerate.includes(idx)).map(p => ({...p, id: shoppingList.indexOf(p)})));
+        if (locResponse && locResponse.coordinates) {
+          const updatedProducts = [...shoppingList];
+          locResponse.coordinates.forEach(coord => {
+            if (updatedProducts[coord.productId]) {
+               updatedProducts[coord.productId].coordinates = { x: coord.x, y: coord.y };
+            }
+          });
+          setShoppingList(updatedProducts);
+        }
+      } catch (e) {
+        console.error("Failed to map hotspots", e);
+      }
       alert("Design successfully regenerated with the sourced products!");
     } catch (error) {
       console.error("Regeneration failed:", error);
@@ -833,6 +865,22 @@ export default function Home() {
                     originalImage={originalImage!} 
                     generatedImage={generatedImage} 
                     onExpand={() => setIsImageModalOpen(true)}
+                    hotspots={shoppingList
+                      .map((p, i) => ({ ...p, id: i }))
+                      .filter(p => p.coordinates)
+                      .map(p => ({
+                        id: p.id,
+                        name: p.name,
+                        x: p.coordinates!.x,
+                        y: p.coordinates!.y
+                      }))
+                    }
+                    onHotspotClick={(id) => {
+                      setActiveTab('shop');
+                      setActiveProductId(id);
+                      document.getElementById(`product-card-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      setTimeout(() => setActiveProductId(null), 3000);
+                    }}
                   />
                   <div className="mt-4 flex items-center justify-between">
                     <p className="text-sm text-gray-500">Click or drag to compare. Click image fullscreen.</p>
@@ -974,7 +1022,15 @@ export default function Home() {
                           <>
                             <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-4 mb-4">
                               {shoppingList.map((item, idx) => (
-                                <div key={idx} className="group border border-gray-100 rounded-2xl p-4 hover:border-indigo-200 hover:shadow-md transition-all bg-gray-50/50 hover:bg-white flex gap-4">
+                                <div 
+                                  key={idx} 
+                                  id={`product-card-${idx}`}
+                                  className={`group rounded-2xl p-4 transition-all flex gap-4 ${
+                                    activeProductId === idx 
+                                      ? 'border-2 border-indigo-500 bg-indigo-50/30 shadow-md ring-4 ring-indigo-500/20' 
+                                      : 'border border-gray-100 hover:border-indigo-200 hover:shadow-md bg-gray-50/50 hover:bg-white'
+                                  }`}
+                                >
                                   <div className="pt-1">
                                     <input 
                                       type="checkbox" 

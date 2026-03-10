@@ -408,6 +408,56 @@ Return the result as a JSON array.`;
   }
 });
 
+app.post('/api/locate-products', authenticateToken, async (req, res) => {
+  try {
+    const { base64Image, mimeType, products } = req.body;
+    
+    const prompt = `Analyze this interior design image. I have a list of products that were placed in this room.
+For each product, identify its location in the image and provide the (x, y) coordinates of its center point as percentages (0 to 100).
+For example, x: 50, y: 50 is the exact center of the image. x: 0, y: 0 is the top-left corner.
+If you cannot clearly see a product from the list, or it's not visible, omit it from the results.
+
+Products to find:
+${products.map(p => `ID ${p.id}: ${p.name} (${p.category})`).join('\n')}
+
+Return the result as a JSON array.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.1-pro-preview',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
+            { text: prompt }
+          ]
+        }
+      ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              productId: { type: Type.INTEGER, description: "The ID of the product" },
+              x: { type: Type.INTEGER, description: "X coordinate percentage (0-100), 0=left, 100=right" },
+              y: { type: Type.INTEGER, description: "Y coordinate percentage (0-100), 0=top, 100=bottom" }
+            },
+            required: ["productId", "x", "y"]
+          }
+        }
+      }
+    });
+
+    const parsed = JSON.parse(response.text || "[]");
+    res.json({ coordinates: parsed });
+  } catch (error) {
+    console.error("Locate Products Error:", error);
+    res.status(500).json({ error: "Failed to locate products in image" });
+  }
+});
+
 app.post('/api/regenerate-products', authenticateToken, checkCredits, async (req, res) => {
   try {
     const { base64Image, mimeType, style, roomType, products } = req.body;
