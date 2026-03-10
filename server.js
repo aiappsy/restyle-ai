@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 import bcrypt from 'bcryptjs';
@@ -22,6 +23,13 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+// Setup uploads directory
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir);
+}
+app.use('/uploads', express.static(uploadsDir));
 
 // Serve static files in production
 app.use(express.static(path.join(__dirname, 'dist')));
@@ -129,6 +137,47 @@ app.get('/api/admin/users', authenticateToken, (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// --- DESIGNS ENDPOINTS ---
+
+app.post('/api/designs/save', authenticateToken, async (req, res) => {
+  const { originalBase64, generatedBase64, style, roomType } = req.body;
+  if (!originalBase64 || !generatedBase64 || !style || !roomType) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  try {
+    const origData = originalBase64.replace(/^data:image\/\w+;base64,/, "");
+    const genData = generatedBase64.replace(/^data:image\/\w+;base64,/, "");
+
+    const origFileName = `orig_${req.user.userId}_${Date.now()}.png`;
+    const genFileName = `gen_${req.user.userId}_${Date.now()}.png`;
+
+    fs.writeFileSync(path.join(uploadsDir, origFileName), Buffer.from(origData, 'base64'));
+    fs.writeFileSync(path.join(uploadsDir, genFileName), Buffer.from(genData, 'base64'));
+
+    const origPath = `/uploads/${origFileName}`;
+    const genPath = `/uploads/${genFileName}`;
+
+    const stmt = db.prepare('INSERT INTO designs (user_id, original_image, generated_image, style, room_type) VALUES (?, ?, ?, ?, ?)');
+    const result = stmt.run(req.user.userId, origPath, genPath, style, roomType);
+
+    res.status(201).json({ success: true, designId: result.lastInsertRowid });
+  } catch (err) {
+    console.error("Save Design Error:", err);
+    res.status(500).json({ error: "Failed to save design" });
+  }
+});
+
+app.get('/api/designs', authenticateToken, (req, res) => {
+  try {
+    const designs = db.prepare('SELECT id, original_image, generated_image, style, room_type, created_at FROM designs WHERE user_id = ? ORDER BY created_at DESC').all(req.user.userId);
+    res.json({ designs });
+  } catch (err) {
+    console.error("Get Designs Error:", err);
+    res.status(500).json({ error: "Failed to fetch saved designs" });
   }
 });
 

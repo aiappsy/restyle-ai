@@ -22,7 +22,18 @@ db.exec(`
     role TEXT DEFAULT 'user',
     credits INTEGER DEFAULT 5,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  )
+  );
+
+  CREATE TABLE IF NOT EXISTS designs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    original_image TEXT NOT NULL,
+    generated_image TEXT NOT NULL,
+    style TEXT NOT NULL,
+    room_type TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
 `);
 
 export default db;

@@ -111,3 +111,20 @@ export async function regenerateWithProducts(
   const data = await handleResponse(response);
   return data.result;
 }
+
+export async function saveDesign(originalBase64: string, generatedBase64: string, style: string, roomType: string) {
+  const response = await fetch('/api/designs/save', {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ originalBase64, generatedBase64, style, roomType })
+  });
+  return handleResponse(response);
+}
+
+export async function getSavedDesigns() {
+  const response = await fetch('/api/designs', {
+    method: 'GET',
+    headers: getHeaders()
+  });
+  return handleResponse(response);
+}

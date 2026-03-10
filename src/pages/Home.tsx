@@ -3,7 +3,7 @@ import { Upload, Image as ImageIcon, Download, Printer, Wand2, RefreshCw, Chevro
 import CompareSlider from '../components/CompareSlider';
 import StyleSelector, { STYLES } from '../components/StyleSelector';
 import AdminModal from '../components/AdminModal';
-import { generateRoomDesign, generateShoppingList, ProductItem, sendChatMessage, regenerateWithProducts, generateSpeech } from '../services/ai';
+import { generateRoomDesign, generateShoppingList, ProductItem, sendChatMessage, regenerateWithProducts, generateSpeech, saveDesign } from '../services/ai';
 import { useAuth } from '../contexts/AuthContext';
 
 const ROOM_TYPES = ['Living Room', 'Bedroom', 'Dining Room', 'Home Office', 'Bathroom', 'Kitchen'];
@@ -30,6 +30,7 @@ export default function Home() {
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [shoppingList, setShoppingList] = useState<ProductItem[]>([]);
   const [loadingState, setLoadingState] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -383,6 +384,20 @@ export default function Home() {
     a.click();
   };
 
+  const handleSaveDesign = async () => {
+    if (!originalImage || !generatedImage) return;
+    setIsSaving(true);
+    try {
+      await saveDesign(originalImage, generatedImage, selectedStyle, roomType);
+      alert('Design saved successfully! You can view it in My Designs.');
+    } catch (error) {
+      console.error('Failed to save design', error);
+      alert('Failed to save design. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handlePrint = () => {
     window.print();
   };
@@ -447,6 +462,7 @@ export default function Home() {
                 {user.role === 'admin' && (
                   <a href="/admin" className="text-sm font-medium text-gray-500 hover:text-indigo-600 transition-colors">Admin Dashboard</a>
                 )}
+                <a href="/my-designs" className="text-sm font-medium text-gray-500 hover:text-indigo-600 transition-colors">My Designs</a>
                 <div className="h-4 w-px bg-gray-200"></div>
                 <div className="text-sm">
                   <span className="text-gray-500 block leading-tight">Signed in as</span>
@@ -757,7 +773,22 @@ export default function Home() {
                     generatedImage={generatedImage} 
                     onExpand={() => setIsImageModalOpen(true)}
                   />
-                  <p className="text-center text-sm text-gray-500 mt-3">Click or drag to compare. Click the image to view fullscreen.</p>
+                  <div className="mt-4 flex items-center justify-between">
+                    <p className="text-sm text-gray-500">Click or drag to compare. Click image fullscreen.</p>
+                    <div className="flex items-center gap-2">
+                       <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-xl transition-colors">
+                         <Download className="w-4 h-4" /> Download HD
+                       </button>
+                       <button 
+                         onClick={handleSaveDesign} 
+                         disabled={isSaving}
+                         className="flex items-center gap-2 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition-colors shadow-sm"
+                       >
+                         {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
+                         Save to Account
+                       </button>
+                    </div>
+                  </div>
                 </div>
               </div>
 

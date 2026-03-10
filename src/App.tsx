@@ -6,6 +6,7 @@ import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import AdminDashboard from './pages/AdminDashboard';
+import MyDesigns from './pages/MyDesigns';
 import { Wand2 } from 'lucide-react';
 
 // Protected Route Component
@@ -44,6 +45,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <AdminDashboard />
+              </ProtectedRoute>
+            } 
+          />
+          <Route 
+            path="/my-designs" 
+            element={
+              <ProtectedRoute>
+                <MyDesigns />
               </ProtectedRoute>
             } 
           />
