@@ -6,6 +6,7 @@ export interface ProductItem {
   imageUrl: string;
   category: string;
   reason: string;
+  visualDescription: string;
   coordinates?: { x: number, y: number };
 }
 

@@ -361,9 +361,10 @@ app.post('/api/shopping-list', authenticateToken, checkCredits, async (req, res)
     }
 
     const prompt = `I am redesigning this ${roomType} into a ${style} style with a ${budget} budget. 
-Search the web for 6 specific, real furniture and decor items (e.g., sofa, rug, wall art, lighting) that perfectly match this new style.${locationInstruction}${shopInstruction}
-You MUST use the googleSearch tool to find actual products, their current approximate prices, and real URLs to buy them or view them in-store.
+Search the web for 6 specific, real furniture and decor items (e.g., sofa, rug, wall art, lighting) that perfectly match this new style.
+You MUST use the googleSearch tool to find actual products.
 CRITICAL: The imageUrl MUST be a direct, publicly accessible image URL ending in .jpg or .png. If you cannot find a verified, direct image URL from your search, you MUST leave the imageUrl field completely blank (""). DO NOT hallucinate URLs.
+ALSO CRITICAL: You must write a "visualDescription" for each product based on the images and descriptions you find. This should be a 2-sentence microscopic visual description (color, material, shape) so an artist can perfectly draw it without seeing the picture.
 Return the result as a JSON array.`;
 
     const response = await ai.models.generateContent({
@@ -391,9 +392,10 @@ Return the result as a JSON array.`;
               productUrl: { type: Type.STRING, description: "Real URL to the product or store page" },
               imageUrl: { type: Type.STRING, description: "Direct URL to an image of the product" },
               category: { type: Type.STRING, description: "e.g., Seating, Lighting, Decor" },
-              reason: { type: Type.STRING, description: "Why this fits the design and shopping preference" }
+              reason: { type: Type.STRING, description: "Why this fits the design and shopping preference" },
+              visualDescription: { type: Type.STRING, description: "Highly detailed visual description of the product (color, material, shape) for an artist to draw it" }
             },
-            required: ["name", "price", "vendor", "productUrl", "imageUrl", "category", "reason"]
+            required: ["name", "price", "vendor", "productUrl", "imageUrl", "category", "reason", "visualDescription"]
           }
         }
       }
@@ -462,39 +464,7 @@ app.post('/api/regenerate-products', authenticateToken, checkCredits, async (req
   try {
     const { base64Image, mimeType, style, roomType, products } = req.body;
 
-    const fetchAndDescribeProduct = async (product) => {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
-        const imgRes = await fetch(product.imageUrl, { signal: controller.signal });
-        clearTimeout(timeoutId);
-
-        if (imgRes.ok) {
-          const buffer = await imgRes.arrayBuffer();
-          const base64Str = Buffer.from(buffer).toString('base64');
-          const pMimeType = imgRes.headers.get('content-type') || 'image/jpeg';
-          
-          const descResponse = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: [
-              { inlineData: { data: base64Str, mimeType: pMimeType } },
-              { text: `Analyze this exact furniture item named "${product.name}" from ${product.vendor}. Write a highly detailed 2-sentence microscopic visual description (color, material, shape, prominent features) so an artist can perfectly draw it into a ${style} ${roomType}. Do not mention the brand name, just the visual aesthetics.` }
-            ]
-          });
-          return `"${product.name}" (${product.category}): ${descResponse.text}`;
-        }
-        throw new Error("Bad response");
-      } catch (err) {
-        const altResponse = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: `The image for a furniture product named "${product.name}" from vendor "${product.vendor}" couldn't be loaded. It was intended for a ${style} ${roomType}. 
-          Please describe a highly beautiful, generic alternative piece of furniture that fulfills this exact role perfectly. Describe its exact color, material, and exquisite shape vividly in 2 sentences.`
-        });
-        return `Replacement for "${product.name}" (${product.category}): ${altResponse.text}`;
-      }
-    };
-
-    const detailedDescriptions = (await Promise.all(products.map(fetchAndDescribeProduct))).join('\n\n');
+    const detailedDescriptions = products.map(p => `"${p.name}" (${p.category}): ${p.visualDescription}`).join('\n\n');
 
     const prompt = `You are an expert interior designer. Redesign this ${roomType} perfectly in the ${style} style.
 CRITICAL INSTRUCTION: You MUST incorporate the following exact furniture items into the scene based on their detailed visual descriptions:
