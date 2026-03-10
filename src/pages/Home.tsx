@@ -343,12 +343,16 @@ export default function Home() {
           speakText("I'm updating the design now. This will just take a moment.");
           
           try {
-             const imageToUse = generatedImage || originalImage!;
-             const mimeTypeToUse = generatedImage ? 'image/png' : originalMimeType;
-             const newImage = await generateRoomDesign(imageToUse, mimeTypeToUse, selectedStyle, roomType, newInstructions);
+             // We MUST pass the *original* raw image to the image generator here!
+             // If we pass the already generated image without an edit mask, the model refuses to alter existing AI furniture significantly.
+             const newImage = await generateRoomDesign(originalImage!, originalMimeType, selectedStyle, roomType, newInstructions);
              setGeneratedImage(newImage);
+             
+             // Keep the description prompt in the chat log, and just turn off the loading spinner.
+             setChatHistory(prev => prev.map(msg => msg.isGeneratingDesign ? { ...msg, isGeneratingDesign: false } : msg));
+             
              const successMsg = "I've updated the design! How does it look now?";
-             setChatHistory(prev => prev.map(msg => msg.isGeneratingDesign ? { ...msg, isGeneratingDesign: false, text: successMsg } : msg));
+             setChatHistory(prev => [...prev, { role: 'model', text: successMsg }]);
              speakText(successMsg);
           } catch (e) {
              const errorMsg = "Sorry, I encountered an error while updating the design.";
