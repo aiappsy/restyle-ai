@@ -362,7 +362,8 @@ app.post('/api/shopping-list', authenticateToken, checkCredits, async (req, res)
 
     const prompt = `I am redesigning this ${roomType} into a ${style} style with a ${budget} budget. 
 Search the web for 6 specific, real furniture and decor items (e.g., sofa, rug, wall art, lighting) that perfectly match this new style.${locationInstruction}${shopInstruction}
-You MUST use the googleSearch tool to find actual products, their current approximate prices, a direct URL to the product image, and real URLs to buy them or view them in-store.
+You MUST use the googleSearch tool to find actual products, their current approximate prices, and real URLs to buy them or view them in-store.
+CRITICAL: The imageUrl MUST be a direct, publicly accessible image URL ending in .jpg or .png. If you cannot find a verified, direct image URL from your search, you MUST leave the imageUrl field completely blank (""). DO NOT hallucinate URLs.
 Return the result as a JSON array.`;
 
     const response = await ai.models.generateContent({

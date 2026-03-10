@@ -990,7 +990,16 @@ export default function Home() {
                                 </div>
                                 {item.imageUrl && (
                                   <div className="w-24 h-24 shrink-0 rounded-xl overflow-hidden bg-gray-100 border border-gray-200">
-                                    <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                    <img 
+                                      src={item.imageUrl} 
+                                      alt={item.name} 
+                                      className="w-full h-full object-cover" 
+                                      referrerPolicy="no-referrer" 
+                                      onError={(e) => {
+                                        const parent = e.currentTarget.parentElement;
+                                        if (parent) parent.style.display = 'none';
+                                      }}
+                                    />
                                   </div>
                                 )}
                                 <div className="flex-1 flex justify-between items-start gap-4">
