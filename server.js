@@ -477,15 +477,68 @@ RULES:
 3. Ensure brilliant lighting matching the environment and perfectly scaled furniture.
 4. Render a photo-realistic, masterpiece image.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [
-          { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
-          { text: prompt },
-        ],
-      },
-    });
+    // 1. Fetch raw product images directly in parallel (3s timeout) to prevent 504s!
+    const fetchImage = async (product) => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const imgRes = await fetch(product.imageUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (imgRes.ok) {
+          const buffer = await imgRes.arrayBuffer();
+          return { data: Buffer.from(buffer).toString('base64'), mimeType: imgRes.headers.get('content-type') || 'image/jpeg' };
+        }
+      } catch(e) { return null; }
+    };
+    
+    let rawProductParts = [];
+    try {
+      const fetchedImages = (await Promise.all(products.map(fetchImage))).filter(Boolean);
+      rawProductParts = fetchedImages.map(img => ({ inlineData: { data: img.data, mimeType: img.mimeType } }));
+    } catch(e) {
+      console.warn("Skipping parallel image fetch...", e);
+    }
+
+    let response;
+    try {
+      // 2. Attempt raw visual injection! Pass all fetched real product images directly into the generative model along with the base room and text.
+      response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+          parts: [
+            { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
+            ...rawProductParts,
+            { text: prompt + "\nCRITICAL: Refer strictly to the provided visual product images to draw the literal exact furniture items." },
+          ],
+        },
+      });
+    } catch (e) {
+      // 3. FALLBACK: If the Image generation endpoint literally Rejects multiple images (API constraint), 
+      // we immediately use the 3.1 Pro Elite Vision model to synthesize the arrays of images into a masterful physical description bridging text+pixels.
+      console.log("Raw Multi-Image array rejected by Image generator model. Falling back to Elite Parallel Vision Synth...");
+      
+      let elitePrompt = prompt;
+      if (rawProductParts.length > 0) {
+        const visionSynth = await ai.models.generateContent({
+          model: 'gemini-3.1-pro-preview',
+          contents: [
+            ...rawProductParts,
+            { text: `Analyze these ${rawProductParts.length} real product images. Write an extremely precise, literal, physical description of exactly how to render these specific items mathematically (textures, colors, geometries, unique identifiers). Output ONLY the physical integration directives.` }
+          ]
+        });
+        elitePrompt += `\n\nELITE PHYSICAL DIRECTIVES (Follow precisely):\n${visionSynth.text}`;
+      }
+
+      response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+          parts: [
+            { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
+            { text: elitePrompt },
+          ],
+        },
+      });
+    }
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
