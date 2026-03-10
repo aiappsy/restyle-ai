@@ -148,11 +148,39 @@ const updateDesignTool = {
 app.post('/api/generate-design', authenticateToken, checkCredits, async (req, res) => {
   try {
     const { base64Image, mimeType, style, roomType, additionalInstructions } = req.body;
+    const lightingVariations = [
+      "bathed in warm, golden-hour natural sunlight",
+      "featuring moody, cinematic lighting with strong contrasting shadows",
+      "illuminated by soft, diffused, overcast morning light",
+      "with bright, airy, and crisp high-key lighting",
+      "featuring dramatic accent lighting highlighting architectural details",
+      "with a cozy, inviting, and layered ambient lighting scheme"
+    ];
+    
+    const atmosphereVariations = [
+      "infusing a sense of calm minimalism and breathing room",
+      "incorporating bold, unexpected statement pieces that spark conversation",
+      "layering rich, tactile textures for a lived-in, curated feel",
+      "emphasizing sleek, architectural lines and perfect symmetry",
+      "blending organic, nature-inspired elements seamlessly indoors",
+      "with a slightly eclectic, highly personal, and worldly touch"
+    ];
+
+    const randomLighting = lightingVariations[Math.floor(Math.random() * lightingVariations.length)];
+    const randomAtmosphere = atmosphereVariations[Math.floor(Math.random() * atmosphereVariations.length)];
+
     let prompt = "";
     if (additionalInstructions) {
-      prompt = `Edit this image: ${additionalInstructions}\nCRITICAL: ONLY change the specific items mentioned. Keep the background, walls, and all other furniture EXACTLY the same. Ensure any new items are perfectly scaled to fit the room realistically without overcrowding.`;
+      prompt = `Edit this image: ${additionalInstructions}\nCRITICAL: ONLY change the specific items mentioned. Keep the background, walls, and all other furniture EXACTLY the same. Ensure any new items are perfectly scaled to fit the room realistically without overcrowding. Make sure the lighting and shadows of the new items match the existing environment perfectly.`;
     } else {
-      prompt = `You are an expert interior designer. Redesign this ${roomType} in a ${style} interior design style. \nCRITICAL RULES:\n1. Keep the original room structure, walls, and perspective.\n2. Change the furniture, decor, lighting, and materials to match the ${style} style. \n3. GOOD DESIGN & PROPORTION: Ensure all furniture is perfectly scaled to fit the room realistically. Do NOT make furniture too large or over-crowd the space. Estimate the room's dimensions from the photo and size items appropriately so there is enough walking space.\n4. Make it look highly realistic, professional, and aesthetically pleasing.`;
+      prompt = `You are an expert, world-class interior designer. Redesign this ${roomType} in a truly exceptional ${style} interior design style.
+      
+CRITICAL RULES:
+1. Keep the exact original room structure, walls, windows, and perspective perfectly intact.
+2. Completely reimagine the furniture, decor, materials, and color palette to embody the absolute highest-end, magazine-quality execution of the ${style} style.
+3. UNIQUE VARIATION: Ensure the scene is ${randomLighting}, while ${randomAtmosphere}. DO NOT generate a generic or cliché layout.
+4. GOOD DESIGN & PROPORTION: Estimate the room's physical dimensions. Ensure all furniture is perfectly scaled. Do NOT over-crowd the space. Leave realistic walking paths.
+5. Create a highly photorealistic, breathtakingly beautiful render.`;
     }
 
     const response = await ai.models.generateContent({
@@ -182,13 +210,15 @@ app.post('/api/generate-design', authenticateToken, checkCredits, async (req, re
 app.post('/api/chat', authenticateToken, checkCredits, async (req, res) => {
   try {
     const { history, message, style, roomType } = req.body;
-    const systemInstruction = `You are an expert interior design AI assistant. The user has just generated a design for their ${roomType} in a ${style} style.
-Your goal is to help them refine the design.
+    const systemInstruction = `You are a world-renowned Master Interior Designer and Architectural Expert. The user has just generated a design for their ${roomType} in a ${style} style.
+Your goal is to act as their personal, highly-educated design consultant to help them refine this space.
+
 CRITICAL RULES:
-1. Keep your responses VERY SHORT (1-2 sentences max), constructive, and strictly to the task at hand. Never overload the user with text.
-2. If the user asks for a specific change (e.g., "change the colors"), confirm exactly what they mean. Do not assume they want to change the furniture unless they say so.
-3. GOOD DESIGN PRINCIPLES: Always consider scale, proportion, and flow. If a user asks for something that might be too big for the room or disrupt the flow, politely point it out and suggest an alternative, or ask for the room's measurements to be sure.
-4. Once you agree on the changes, use the \`updateDesign\` tool. The \`newInstructions\` parameter MUST be extremely concise and literal (e.g., "Change the chairs to retro style. Ensure the new chairs are properly scaled to fit the room without overcrowding.").`;
+1. EDUCATIONAL & AUTHORITATIVE: Speak with the confidence and deep knowledge of a master designer. Explain *why* certain design choices work (e.g., color theory, spatial balance, focal points, material contrast).
+2. TONE: Be highly engaging, inspiring, and wonderfully descriptive. Use Markdown formatting (bullet points, bold text) to organize your thoughts beautifully. Teach the user something new about design in your responses!
+3. COLLABORATIVE REFINEMENT: If the user asks for a vague change ("make it bold", "surprise me"), suggest exactly what you intend to do (e.g., "I suggest we introduce a vibrant burnt orange velvet sofa to serve as our focal point, grounded by a dark walnut coffee table. This will create stunning contrast!").
+4. GOOD DESIGN PRINCIPLES: Always prioritize scale, proportion, and flow. If you change furniture, mention that you will ensure it scales correctly to the room's footprint safely without overcrowding.
+5. EXECUTING CHANGES: Once you agree on what to change, trigger the \`updateDesign\` tool immediately. The \`newInstructions\` parameter MUST be a literal, descriptive prompt for an image generation model (e.g., "Replace the main sofa with a burnt orange velvet Mid-Century sofa. Add a dark walnut coffee table. Leave the rest of the room exactly as it is. Ensure lighting matches.").`;
 
     const contents = [...history, { role: 'user', parts: [{ text: message }] }];
 
@@ -203,11 +233,16 @@ CRITICAL RULES:
 
     const calls = response.functionCalls || [];
     
-    // Deduct credit only if an updateDesign was fired, otherwise standard chat is free/or costs 1 credit? 
-    // Let's deduct 1 for chat just to be consistent. 
-    deductCredit(req.user.userId);
+    // Safely extract text because when a model ONLY returns a function call, accessing response.text throws an Error in the SDK.
+    let responseText = "";
+    try {
+      if (response.text) responseText = response.text;
+    } catch (e) {
+      // Intentionally swallow the "response contains no text" error
+      // It just means the AI decided to update the design without saying anything first.
+    }
     
-    res.json({ text: response.text, functionCalls: calls });
+    res.json({ text: responseText, functionCalls: calls });
   } catch (error) {
     console.error("Chat Error:", error);
     res.status(500).json({ error: "Failed to process chat" });
