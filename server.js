@@ -92,7 +92,8 @@ CRITICAL RULES:
       }
     });
 
-    res.json(response);
+    const calls = response.functionCalls || [];
+    res.json({ text: response.text, functionCalls: calls });
   } catch (error) {
     console.error("Chat Error:", error);
     res.status(500).json({ error: "Failed to process chat" });
