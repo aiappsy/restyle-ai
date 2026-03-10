@@ -327,7 +327,10 @@ export default function Home() {
         parts: [{ text: msg.text }]
       }));
       
-      const response = await sendChatMessage(apiHistory, text, selectedStyle, roomType);
+      const imageToUse = generatedImage || originalImage!;
+      const mimeTypeToUse = generatedImage ? 'image/png' : originalMimeType;
+
+      const response = await sendChatMessage(apiHistory, text, selectedStyle, roomType, imageToUse, mimeTypeToUse);
       
       if (response.functionCalls && response.functionCalls.length > 0) {
         const call = response.functionCalls[0];

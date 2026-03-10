@@ -44,12 +44,14 @@ export async function sendChatMessage(
   history: { role: string, parts: { text: string }[] }[],
   message: string,
   style: string,
-  roomType: string
+  roomType: string,
+  base64Image?: string,
+  mimeType?: string
 ) {
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: getHeaders(),
-    body: JSON.stringify({ history, message, style, roomType })
+    body: JSON.stringify({ history, message, style, roomType, base64Image, mimeType })
   });
   return handleResponse(response);
 }

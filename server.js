@@ -141,7 +141,7 @@ const updateDesignTool = {
     properties: {
       newInstructions: {
         type: Type.STRING,
-        description: 'The EXACT, concise change requested by the user. Do not add extra fluff or descriptions. (e.g., "Change the sofa to navy blue", "Add a retro chair").'
+        description: 'A FULL, highly-detailed, and comprehensive description of the ENTIRE room as it should look after the changes are made. (e.g., "A stylish modern living room featuring a rich navy blue velvet sofa, a sleek glass coffee table, white walls, and bright natural sunlight"). DO NOT just send short commands like "Change the sofa to blue". You must describe the entire room, including the things that stay the same.'
       }
     },
     required: ['newInstructions']
@@ -176,7 +176,15 @@ app.post('/api/generate-design', authenticateToken, checkCredits, async (req, re
 
     let prompt = "";
     if (additionalInstructions) {
-      prompt = `Edit this image: ${additionalInstructions}\nCRITICAL: ONLY change the specific items mentioned. Keep the background, walls, and all other furniture EXACTLY the same. Ensure any new items are perfectly scaled to fit the room realistically without overcrowding. Make sure the lighting and shadows of the new items match the existing environment perfectly.`;
+      prompt = `Redesign this ${roomType} using the following detailed description as your ultimate guide:
+"${additionalInstructions}"
+
+CRITICAL RULES:
+1. Keep the exact original architectural structure, walls, windows, and perspective perfectly intact.
+2. Apply the beautiful design items described above.
+3. GOOD DESIGN & PROPORTION: Ensure the scene is perfectly balanced and furniture is realistically scaled. Do NOT over-crowd the space. Leave realistic walking paths.
+4. Make sure the lighting and shadows match the environment perfectly.
+5. Create a photorealistic, breathtakingly beautiful render.`;
     } else {
       prompt = `You are an expert, world-class interior designer. Redesign this ${roomType} in a truly exceptional ${style} interior design style.
       
@@ -214,18 +222,24 @@ CRITICAL RULES:
 
 app.post('/api/chat', authenticateToken, checkCredits, async (req, res) => {
   try {
-    const { history, message, style, roomType } = req.body;
+    const { history, message, style, roomType, base64Image, mimeType } = req.body;
     const systemInstruction = `You are a world-renowned Master Interior Designer and Architectural Expert. The user has just generated a design for their ${roomType} in a ${style} style.
 Your goal is to act as their personal, highly-educated design consultant to help them refine this space.
+Look carefully at the image provided to understand the current layout and furniture.
 
 CRITICAL RULES:
 1. EDUCATIONAL & AUTHORITATIVE: Speak with the confidence and deep knowledge of a master designer. Explain *why* certain design choices work (e.g., color theory, spatial balance, focal points, material contrast).
-2. TONE: Be highly engaging, inspiring, and wonderfully descriptive. Use Markdown formatting (bullet points, bold text) to organize your thoughts beautifully. Teach the user something new about design in your responses!
-3. COLLABORATIVE REFINEMENT: If the user asks for a vague change ("make it bold", "surprise me"), suggest exactly what you intend to do (e.g., "I suggest we introduce a vibrant burnt orange velvet sofa to serve as our focal point, grounded by a dark walnut coffee table. This will create stunning contrast!").
-4. GOOD DESIGN PRINCIPLES: Always prioritize scale, proportion, and flow. If you change furniture, mention that you will ensure it scales correctly to the room's footprint safely without overcrowding.
-5. EXECUTING CHANGES: Once you agree on what to change, trigger the \`updateDesign\` tool immediately. The \`newInstructions\` parameter MUST be a literal, descriptive prompt for an image generation model (e.g., "Replace the main sofa with a burnt orange velvet Mid-Century sofa. Add a dark walnut coffee table. Leave the rest of the room exactly as it is. Ensure lighting matches.").`;
+2. TONE: Be highly engaging, inspiring, and wonderfully descriptive. Use Markdown formatting (bullet points, bold text) to organize your thoughts beautifully. 
+3. COLLABORATIVE REFINEMENT: If the user asks for a vague change ("make it bold"), suggest exactly what you intend to do. 
+4. EXECUTING CHANGES: Once you agree on what to change, trigger the \`updateDesign\` tool immediately. The \`newInstructions\` parameter MUST be a FULL, HOLISTIC description of the ENTIRE room as it should look after the change. For example, do not just send "Change sofa to blue". Instead, you MUST write: "A breathtaking modern living room featuring a beautiful navy blue velvet sofa as the focal point, accented by a geometric rug, warm walnut hardwood floors, and large windows bringing in natural light." The image generator needs the FULL architectural context of the room to render it correctly!`;
 
-    const contents = [...history, { role: 'user', parts: [{ text: message }] }];
+    const userParts = [];
+    if (base64Image && mimeType) {
+      userParts.push({ inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } });
+    }
+    userParts.push({ text: message });
+
+    const contents = [...history, { role: 'user', parts: userParts }];
 
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
