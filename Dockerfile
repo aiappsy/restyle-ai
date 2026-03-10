@@ -23,6 +23,7 @@ RUN npm ci --omit=dev
 # Copy the built frontend and the Express server
 COPY --from=builder /app/dist ./dist
 COPY server.js ./
+COPY db.js ./
 
 # Expose the API port
 EXPOSE 3001
