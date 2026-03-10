@@ -410,8 +410,51 @@ Return the result as a JSON array.`;
 app.post('/api/regenerate-products', authenticateToken, checkCredits, async (req, res) => {
   try {
     const { base64Image, mimeType, style, roomType, products } = req.body;
-    const productDescriptions = products.map(p => `- ${p.name} from ${p.vendor} (${p.category})`).join('\n');
-    const prompt = `Redesign this ${roomType} in a ${style} interior design style. Keep the original room structure, walls, and perspective, but specifically incorporate the following real products into the design:\n${productDescriptions}\n\nMake the new furniture and decor look as close to these specific products as possible, while maintaining a highly realistic and professional look.`;
+
+    const fetchAndDescribeProduct = async (product) => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const imgRes = await fetch(product.imageUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (imgRes.ok) {
+          const buffer = await imgRes.arrayBuffer();
+          const base64Str = Buffer.from(buffer).toString('base64');
+          const pMimeType = imgRes.headers.get('content-type') || 'image/jpeg';
+          
+          const descResponse = await ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: [
+              { inlineData: { data: base64Str, mimeType: pMimeType } },
+              { text: `Analyze this exact furniture item named "${product.name}" from ${product.vendor}. Write a highly detailed 2-sentence microscopic visual description (color, material, shape, prominent features) so an artist can perfectly draw it into a ${style} ${roomType}. Do not mention the brand name, just the visual aesthetics.` }
+            ]
+          });
+          return `"${product.name}" (${product.category}): ${descResponse.text}`;
+        }
+        throw new Error("Bad response");
+      } catch (err) {
+        const altResponse = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: `The image for a furniture product named "${product.name}" from vendor "${product.vendor}" couldn't be loaded. It was intended for a ${style} ${roomType}. 
+          Please describe a highly beautiful, generic alternative piece of furniture that fulfills this exact role perfectly. Describe its exact color, material, and exquisite shape vividly in 2 sentences.`
+        });
+        return `Replacement for "${product.name}" (${product.category}): ${altResponse.text}`;
+      }
+    };
+
+    const detailedDescriptions = (await Promise.all(products.map(fetchAndDescribeProduct))).join('\n\n');
+
+    const prompt = `You are an expert interior designer. Redesign this ${roomType} perfectly in the ${style} style.
+CRITICAL INSTRUCTION: You MUST incorporate the following exact furniture items into the scene based on their detailed visual descriptions:
+
+${detailedDescriptions}
+
+RULES:
+1. Keep the room's core architecture, walls, and perspective exactly the same.
+2. Perfectly incorporate the exact pieces of furniture described above. Replicate their color, material, and shape precisely, making them the stars of the room!
+3. Ensure brilliant lighting matching the environment and perfectly scaled furniture.
+4. Render a photo-realistic, masterpiece image.`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash-image',

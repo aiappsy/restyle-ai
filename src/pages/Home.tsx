@@ -29,6 +29,8 @@ export default function Home() {
   
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [shoppingList, setShoppingList] = useState<ProductItem[]>([]);
+
+  const [selectedProductsToRegenerate, setSelectedProductsToRegenerate] = useState<number[]>([]);
   const [loadingState, setLoadingState] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   
@@ -283,6 +285,7 @@ export default function Home() {
         shoppingMethod
       );
       setShoppingList(products);
+      setSelectedProductsToRegenerate(products.map((_, idx) => idx));
       setHasSourcedProducts(true);
     } catch (error) {
       console.error("Sourcing failed:", error);
@@ -294,6 +297,13 @@ export default function Home() {
 
   const handleRegenerateWithProducts = async () => {
     if (!generatedImage || shoppingList.length === 0) return;
+    
+    const productsToUse = shoppingList.filter((_, idx) => selectedProductsToRegenerate.includes(idx));
+    if (productsToUse.length === 0) {
+      alert("Please select at least one product to redesign with.");
+      return;
+    }
+
     setIsRegeneratingWithProducts(true);
     try {
       const newImage = await regenerateWithProducts(
@@ -301,7 +311,7 @@ export default function Home() {
         'image/png', // assuming the generated image is png
         selectedStyle,
         roomType,
-        shoppingList
+        productsToUse
       );
       setGeneratedImage(newImage);
       alert("Design successfully regenerated with the sourced products!");
@@ -921,6 +931,17 @@ export default function Home() {
                           <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar flex-1 mb-4">
                             {shoppingList.map((item, idx) => (
                               <div key={idx} className="group border border-gray-100 rounded-2xl p-4 hover:border-indigo-200 hover:shadow-md transition-all bg-gray-50/50 hover:bg-white flex gap-4">
+                                <div className="pt-1">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={selectedProductsToRegenerate.includes(idx)} 
+                                    onChange={() => {
+                                      setSelectedProductsToRegenerate(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]);
+                                    }}
+                                    className="w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                    title="Include in redesign"
+                                  />
+                                </div>
                                 {item.imageUrl && (
                                   <div className="w-24 h-24 shrink-0 rounded-xl overflow-hidden bg-gray-100 border border-gray-200">
                                     <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -964,7 +985,7 @@ export default function Home() {
                               ) : (
                                 <>
                                   <Wand2 className="w-5 h-5" />
-                                  Regenerate Design with these Products
+                                  Regenerate Design with ({selectedProductsToRegenerate.length}) Products
                                 </>
                               )}
                             </button>
