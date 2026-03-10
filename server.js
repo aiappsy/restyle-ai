@@ -66,13 +66,18 @@ app.post('/api/auth/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
     
-    // First user becomes admin? Let's just default to user, you can manually promote.
+    // Check if this is the first user
+    const userCountRow = db.prepare('SELECT COUNT(*) as count FROM users').get();
+    const isFirstUser = userCountRow.count === 0;
+    const role = isFirstUser ? 'admin' : 'user';
+    const credits = isFirstUser ? 999999 : 5;
+
     const stmt = db.prepare('INSERT INTO users (name, email, password_hash, location, role, credits) VALUES (?, ?, ?, ?, ?, ?)');
-    const result = stmt.run(name, email, password_hash, location || null, 'user', 5);
+    const result = stmt.run(name, email, password_hash, location || null, role, credits);
     
-    const token = jwt.sign({ userId: result.lastInsertRowid, email, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ userId: result.lastInsertRowid, email, role }, JWT_SECRET, { expiresIn: '7d' });
     
-    res.status(201).json({ token, user: { id: result.lastInsertRowid, name, email, location, role: 'user', credits: 5 } });
+    res.status(201).json({ token, user: { id: result.lastInsertRowid, name, email, location, role, credits } });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Server error during registration" });
