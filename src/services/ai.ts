@@ -8,6 +8,22 @@ export interface ProductItem {
   reason: string;
 }
 
+const getHeaders = () => {
+  const token = localStorage.getItem('restyle_token');
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+  };
+};
+
+const handleResponse = async (response: Response) => {
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || 'API request failed');
+  }
+  return response.json();
+};
+
 export async function generateRoomDesign(
   base64Image: string,
   mimeType: string,
@@ -17,11 +33,10 @@ export async function generateRoomDesign(
 ): Promise<string> {
   const response = await fetch('/api/generate-design', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({ base64Image, mimeType, style, roomType, additionalInstructions })
   });
-  if (!response.ok) throw new Error('Failed to generate design');
-  const data = await response.json();
+  const data = await handleResponse(response);
   return data.result;
 }
 
@@ -33,18 +48,17 @@ export async function sendChatMessage(
 ) {
   const response = await fetch('/api/chat', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({ history, message, style, roomType })
   });
-  if (!response.ok) throw new Error('Failed to process chat');
-  return await response.json();
+  return handleResponse(response);
 }
 
 export async function generateSpeech(text: string): Promise<string | null> {
   try {
     const response = await fetch('/api/speech', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getHeaders(),
       body: JSON.stringify({ text })
     });
     if (!response.ok) return null;
@@ -69,11 +83,10 @@ export async function generateShoppingList(
   try {
     const response = await fetch('/api/shopping-list', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getHeaders(),
       body: JSON.stringify({ base64Image, mimeType, style, roomType, budget, customShops, location, shoppingMethod })
     });
-    if (!response.ok) throw new Error('Failed to generate shopping list');
-    const data = await response.json();
+    const data = await handleResponse(response);
     return data.products || [];
   } catch (e) {
     console.error("Failed to generate shopping list", e);
@@ -90,10 +103,9 @@ export async function regenerateWithProducts(
 ): Promise<string> {
   const response = await fetch('/api/regenerate-products', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getHeaders(),
     body: JSON.stringify({ base64Image, mimeType, style, roomType, products })
   });
-  if (!response.ok) throw new Error('Failed to regenerate products');
-  const data = await response.json();
+  const data = await handleResponse(response);
   return data.result;
 }

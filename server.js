@@ -3,6 +3,9 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import db from './db.js';
 
 dotenv.config();
 
@@ -12,7 +15,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Increase payload limit for base64 images
+// Secret for JWT
+const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-restyle-key-123';
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -21,9 +26,126 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // Serve static files in production
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// --- API Endpoints ---
+// --- AUTH MIDDLEWARE ---
 
-app.post('/api/generate-design', async (req, res) => {
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  
+  if (!token) return res.status(401).json({ error: "Access denied. No token provided." });
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ error: "Invalid token." });
+    req.user = user;
+    next();
+  });
+};
+
+const checkCredits = (req, res, next) => {
+  const user = db.prepare('SELECT credits FROM users WHERE id = ?').get(req.user.userId);
+  if (!user || user.credits <= 0) {
+    return res.status(403).json({ error: "You have run out of credits. Please upgrade to continue." });
+  }
+  next();
+};
+
+const deductCredit = (userId) => {
+  db.prepare('UPDATE users SET credits = credits - 1 WHERE id = ?').run(userId);
+};
+
+// --- AUTH ENDPOINTS ---
+
+app.post('/api/auth/register', async (req, res) => {
+  const { name, email, password, location } = req.body;
+  if (!name || !email || !password) return res.status(400).json({ error: "Missing required fields" });
+
+  try {
+    const existingUser = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    if (existingUser) return res.status(400).json({ error: "Email already registered" });
+
+    const salt = await bcrypt.genSalt(10);
+    const password_hash = await bcrypt.hash(password, salt);
+    
+    // First user becomes admin? Let's just default to user, you can manually promote.
+    const stmt = db.prepare('INSERT INTO users (name, email, password_hash, location, role, credits) VALUES (?, ?, ?, ?, ?, ?)');
+    const result = stmt.run(name, email, password_hash, location || null, 'user', 5);
+    
+    const token = jwt.sign({ userId: result.lastInsertRowid, email, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
+    
+    res.status(201).json({ token, user: { id: result.lastInsertRowid, name, email, location, role: 'user', credits: 5 } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error during registration" });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Missing credentials" });
+
+  try {
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    if (!user) return res.status(400).json({ error: "Invalid email or password" });
+
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) return res.status(400).json({ error: "Invalid email or password" });
+
+    const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+    
+    // Don't leak the hash
+    delete user.password_hash;
+    
+    res.json({ token, user });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error during login" });
+  }
+});
+
+app.get('/api/auth/me', authenticateToken, (req, res) => {
+  try {
+    const user = db.prepare('SELECT id, name, email, location, role, credits, created_at FROM users WHERE id = ?').get(req.user.userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json({ user });
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// --- ADMIN ENDPOINTS ---
+
+app.get('/api/admin/users', authenticateToken, (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: "Admin access required" });
+  }
+  try {
+    const users = db.prepare('SELECT id, name, email, location, role, credits, created_at FROM users ORDER BY created_at DESC').all();
+    res.json({ users });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// --- AI GENERATION TOOL ---
+const updateDesignTool = {
+  name: 'updateDesign',
+  description: 'Regenerate the room design with new instructions based on the user\'s requests.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      newInstructions: {
+        type: Type.STRING,
+        description: 'The EXACT, concise change requested by the user. Do not add extra fluff or descriptions. (e.g., "Change the sofa to navy blue", "Add a retro chair").'
+      }
+    },
+    required: ['newInstructions']
+  }
+};
+
+// --- GEMINI ENDPOINTS (Protected) ---
+
+app.post('/api/generate-design', authenticateToken, checkCredits, async (req, res) => {
   try {
     const { base64Image, mimeType, style, roomType, additionalInstructions } = req.body;
     let prompt = "";
@@ -45,6 +167,7 @@ app.post('/api/generate-design', async (req, res) => {
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
+        deductCredit(req.user.userId);
         return res.json({ result: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}` });
       }
     }
@@ -55,22 +178,8 @@ app.post('/api/generate-design', async (req, res) => {
   }
 });
 
-const updateDesignTool = {
-  name: 'updateDesign',
-  description: 'Regenerate the room design with new instructions based on the user\'s requests.',
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      newInstructions: {
-        type: Type.STRING,
-        description: 'The EXACT, concise change requested by the user. Do not add extra fluff or descriptions. (e.g., "Change the sofa to navy blue", "Add a retro chair").'
-      }
-    },
-    required: ['newInstructions']
-  }
-};
 
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', authenticateToken, checkCredits, async (req, res) => {
   try {
     const { history, message, style, roomType } = req.body;
     const systemInstruction = `You are an expert interior design AI assistant. The user has just generated a design for their ${roomType} in a ${style} style.
@@ -93,6 +202,11 @@ CRITICAL RULES:
     });
 
     const calls = response.functionCalls || [];
+    
+    // Deduct credit only if an updateDesign was fired, otherwise standard chat is free/or costs 1 credit? 
+    // Let's deduct 1 for chat just to be consistent. 
+    deductCredit(req.user.userId);
+    
     res.json({ text: response.text, functionCalls: calls });
   } catch (error) {
     console.error("Chat Error:", error);
@@ -100,7 +214,7 @@ CRITICAL RULES:
   }
 });
 
-app.post('/api/speech', async (req, res) => {
+app.post('/api/speech', authenticateToken, async (req, res) => {
   try {
     const { text } = req.body;
     const response = await ai.models.generateContent({
@@ -124,7 +238,7 @@ app.post('/api/speech', async (req, res) => {
   }
 });
 
-app.post('/api/shopping-list', async (req, res) => {
+app.post('/api/shopping-list', authenticateToken, checkCredits, async (req, res) => {
   try {
     const { base64Image, mimeType, style, roomType, budget, customShops, location, shoppingMethod } = req.body;
     let shopInstruction = "";
@@ -181,6 +295,7 @@ Return the result as a JSON array.`;
       }
     });
 
+    deductCredit(req.user.userId);
     const text = response.text || "[]";
     res.json({ products: JSON.parse(text) });
   } catch (error) {
@@ -189,7 +304,7 @@ Return the result as a JSON array.`;
   }
 });
 
-app.post('/api/regenerate-products', async (req, res) => {
+app.post('/api/regenerate-products', authenticateToken, checkCredits, async (req, res) => {
   try {
     const { base64Image, mimeType, style, roomType, products } = req.body;
     const productDescriptions = products.map(p => `- ${p.name} from ${p.vendor} (${p.category})`).join('\n');
@@ -207,6 +322,7 @@ app.post('/api/regenerate-products', async (req, res) => {
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
+        deductCredit(req.user.userId);
         return res.json({ result: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}` });
       }
     }
