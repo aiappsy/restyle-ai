@@ -56,6 +56,7 @@ export default function Home() {
   const [isSourcingProducts, setIsSourcingProducts] = useState(false);
   const [hasSourcedProducts, setHasSourcedProducts] = useState(false);
   const [isRegeneratingWithProducts, setIsRegeneratingWithProducts] = useState(false);
+  const [activeTab, setActiveTab] = useState<'chat' | 'shop'>('shop');
 
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -305,23 +306,12 @@ export default function Home() {
     setChatHistory([]);
     
     try {
-      setLoadingState('Reimagining your space...');
-      const newImage = await generateRoomDesign(originalImage, originalMimeType, selectedStyle, roomType);
-      setGeneratedImage(newImage);
-      setStep(4);
-    } catch (error) {
-      console.error("Generation failed:", error);
-      alert("Failed to generate design. Please try again.");
-      setStep(2);
-    }
-  };
-
-  const handleFindProducts = async () => {
-    setIsSourcingProducts(true);
-    try {
+      setLoadingState('Sourcing perfect real-world products...');
+      setIsSourcingProducts(true);
+      
       const customShops = searchMode === 'manual' && selectedShops.length > 0 ? selectedShops : undefined;
       const products = await generateShoppingList(
-        originalImage!, 
+        originalImage, 
         originalMimeType, 
         selectedStyle, 
         roomType, 
@@ -330,14 +320,29 @@ export default function Home() {
         location,
         shoppingMethod
       );
+      
       setShoppingList(products);
       setSelectedProductsToRegenerate(products.map((_, idx) => idx));
       setHasSourcedProducts(true);
-    } catch (error) {
-      console.error("Sourcing failed:", error);
-      alert("Failed to find products. Please try again.");
-    } finally {
       setIsSourcingProducts(false);
+      
+      setLoadingState('Reimagining your space with these products...');
+      
+      // Pass originalImage to regenerateWithProducts, bypassing the fantasy room generation!
+      const newImage = await regenerateWithProducts(
+        originalImage, 
+        originalMimeType,
+        selectedStyle,
+        roomType,
+        products
+      );
+      setGeneratedImage(newImage);
+      setStep(4);
+    } catch (error) {
+      console.error("Pipeline failed:", error);
+      alert("Failed to source products or design room. Please try again.");
+      setIsSourcingProducts(false);
+      setStep(2);
     }
   };
 
@@ -848,207 +853,184 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Right: Shopping List or Chat */}
-              <div className="lg:col-span-5">
-                <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 h-full">
-                  {!hasSourcedProducts && !isSourcingProducts ? (
-                    <div className="flex flex-col h-full">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center shrink-0">
-                            <MessageSquare className="w-5 h-5" />
+              {/* Right: Shopping List or Chat TABS */}
+              <div className="lg:col-span-5 h-[calc(100vh-20rem)] min-h-[500px]">
+                <div className="bg-white rounded-3xl shadow-sm border border-gray-100 h-full flex flex-col overflow-hidden">
+                  {/* Tabs Header */}
+                  <div className="flex border-b border-gray-100">
+                    <button 
+                      onClick={() => setActiveTab('shop')}
+                      className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${
+                        activeTab === 'shop' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/30' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      <ShoppingBag className="w-4 h-4" />
+                      Shopping List ({shoppingList.length})
+                    </button>
+                    <button 
+                      onClick={() => setActiveTab('chat')}
+                      className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors ${
+                        activeTab === 'chat' ? 'text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50/30' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      <MessageSquare className="w-4 h-4" />
+                      Design Assistant
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-hidden p-6">
+                    {activeTab === 'chat' ? (
+                      <div className="flex flex-col h-full">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center shrink-0">
+                              <MessageSquare className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <h3 className="text-xl font-bold">Design Assistant</h3>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={toggleVoice}
+                            className={`p-2 rounded-full transition-colors ${voiceEnabled ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-400'}`}
+                          >
+                            {voiceEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+                          </button>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto mb-4 bg-gray-50 rounded-2xl p-4 space-y-4 custom-scrollbar">
+                          {chatHistory.length === 0 && (
+                            <div className="text-center text-gray-500 my-8">
+                              <p>Hi! I'm your AI design expert.</p>
+                              <p className="text-sm mt-2">Want to change the sofa color? Just ask!</p>
+                            </div>
+                          )}
+                          {chatHistory.map((msg, idx) => (
+                            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                              <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                                msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-white border border-gray-200 text-gray-800 rounded-bl-sm shadow-sm'
+                              }`}>
+                                {msg.isGeneratingDesign ? (
+                                  <div className="flex items-center gap-2">
+                                    <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
+                                    <span className="text-sm">{msg.text}</span>
+                                  </div>
+                                ) : (
+                                  <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                          {isChatLoading && (
+                            <div className="flex justify-start">
+                              <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
+                                <div className="flex gap-1">
+                                  <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce"></div>
+                                  <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                                  <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex gap-2 relative mt-auto">
+                          <input
+                            type="text"
+                            value={chatInput}
+                            onChange={(e) => setChatInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSendMessage(chatInput)}
+                            placeholder="E.g., Make the sofa navy blue..."
+                            className="flex-1 border border-gray-200 rounded-xl pl-4 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm transition-colors"
+                            disabled={isChatLoading}
+                          />
+                          <button
+                            onClick={() => handleSendMessage(chatInput)}
+                            disabled={!chatInput.trim() || isChatLoading}
+                            className="bg-indigo-600 text-white p-3 rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors shrink-0"
+                          >
+                            <Send className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col h-full animate-in fade-in duration-300">
+                        <div className="flex items-center gap-3 mb-6">
+                          <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center shrink-0">
+                            <ShoppingBag className="w-5 h-5" />
                           </div>
                           <div>
-                            <h3 className="text-xl font-bold">Design Assistant</h3>
-                            <p className="text-sm text-gray-500">Ask to change colors, furniture, or style</p>
+                            <h3 className="text-xl font-bold">Shop the Look</h3>
+                            <p className="text-sm text-gray-500">Real products curated for this design</p>
                           </div>
                         </div>
-                        <button 
-                          onClick={toggleVoice}
-                          className={`p-2 rounded-full transition-colors ${voiceEnabled ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-100 text-gray-400'}`}
-                          title={voiceEnabled ? "Mute Assistant" : "Unmute Assistant"}
-                        >
-                          {voiceEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
-                        </button>
-                      </div>
-                      
-                      <div className="flex-1 overflow-y-auto mb-4 bg-gray-50 rounded-2xl p-4 space-y-4 custom-scrollbar min-h-[300px] max-h-[400px]">
-                        {chatHistory.length === 0 && (
-                          <div className="text-center text-gray-500 my-8">
-                            <p>Hi! I'm your AI design expert.</p>
-                            <p className="text-sm mt-2">Want to change the sofa color? Add a rug? Just ask!</p>
-                          </div>
-                        )}
-                        {chatHistory.map((msg, idx) => (
-                          <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                              msg.role === 'user' 
-                                ? 'bg-indigo-600 text-white rounded-br-sm' 
-                                : 'bg-white border border-gray-200 text-gray-800 rounded-bl-sm shadow-sm'
-                            }`}>
-                              {msg.isGeneratingDesign ? (
-                                <div className="flex items-center gap-2">
-                                  <RefreshCw className="w-4 h-4 animate-spin shrink-0" />
-                                  <span className="text-sm">{msg.text}</span>
-                                </div>
-                              ) : (
-                                <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                        {isChatLoading && (
-                          <div className="flex justify-start">
-                            <div className="bg-white border border-gray-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
-                              <div className="flex gap-1">
-                                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce"></div>
-                                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                                <div className="w-2 h-2 bg-gray-300 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
 
-                      <div className="flex gap-2 mb-6 relative">
-                        <input
-                          type="text"
-                          value={chatInput}
-                          onChange={(e) => setChatInput(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && handleSendMessage(chatInput)}
-                          placeholder={isListening ? "Listening..." : "E.g., Make the sofa navy blue..."}
-                          className={`flex-1 border rounded-xl pl-4 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm transition-colors ${isListening ? 'border-indigo-500 bg-indigo-50/30' : 'border-gray-200'}`}
-                          disabled={isChatLoading}
-                        />
-                        <button
-                          onClick={toggleListening}
-                          className={`absolute right-14 top-1/2 -translate-y-1/2 p-2 rounded-full transition-colors ${isListening ? 'text-red-500 hover:bg-red-50' : 'text-gray-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
-                          title={isListening ? "Stop listening" : "Use voice input"}
-                        >
-                          {isListening ? <MicOff className="w-5 h-5 animate-pulse" /> : <Mic className="w-5 h-5" />}
-                        </button>
-                        <button
-                          onClick={() => handleSendMessage(chatInput)}
-                          disabled={!chatInput.trim() || isChatLoading}
-                          className="bg-indigo-600 text-white p-3 rounded-xl hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-                        >
-                          <Send className="w-5 h-5" />
-                        </button>
-                      </div>
-
-                      <div className="pt-4 border-t border-gray-100">
-                        <p className="text-center text-sm font-medium text-gray-900 mb-3">Happy with the design?</p>
-                        <button
-                          onClick={handleFindProducts}
-                          className="px-8 py-4 bg-gray-900 text-white font-medium rounded-xl hover:bg-gray-800 transition-colors flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transform w-full justify-center"
-                        >
-                          <ShoppingBag className="w-5 h-5" />
-                          Find Products
-                        </button>
-                      </div>
-                    </div>
-                  ) : isSourcingProducts ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center py-20 space-y-6 animate-in fade-in duration-300">
-                      <RefreshCw className="w-12 h-12 text-indigo-600 animate-spin" />
-                      <div>
-                        <h3 className="text-xl font-bold mb-2">Sourcing real products...</h3>
-                        <p className="text-gray-500">Searching {searchMode === 'manual' ? 'your selected shops' : 'the web'} for the best matches.</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                      <div className="flex items-center gap-3 mb-6">
-                        <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center">
-                          <ShoppingBag className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-xl font-bold">Shop the Look</h3>
-                          <p className="text-sm text-gray-500">Real products curated for this design</p>
-                        </div>
-                      </div>
-
-                      {shoppingList.length === 0 ? (
-                        <div className="text-center py-12 text-gray-500">
-                          <p>We couldn't find specific products for this design.</p>
-                          <button onClick={handleFindProducts} className="mt-4 text-indigo-600 font-medium hover:underline">Try searching again</button>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col h-full">
-                          <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar flex-1 mb-4">
-                            {shoppingList.map((item, idx) => (
-                              <div key={idx} className="group border border-gray-100 rounded-2xl p-4 hover:border-indigo-200 hover:shadow-md transition-all bg-gray-50/50 hover:bg-white flex gap-4">
-                                <div className="pt-1">
-                                  <input 
-                                    type="checkbox" 
-                                    checked={selectedProductsToRegenerate.includes(idx)} 
-                                    onChange={() => {
-                                      setSelectedProductsToRegenerate(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]);
-                                    }}
-                                    className="w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                    title="Include in redesign"
-                                  />
-                                </div>
-                                {item.imageUrl && (
-                                  <div className="w-24 h-24 shrink-0 rounded-xl overflow-hidden bg-gray-100 border border-gray-200">
-                                    <img 
-                                      src={item.imageUrl} 
-                                      alt={item.name} 
-                                      className="w-full h-full object-cover" 
-                                      referrerPolicy="no-referrer" 
-                                      onError={(e) => {
-                                        const parent = e.currentTarget.parentElement;
-                                        if (parent) parent.style.display = 'none';
+                        {shoppingList.length === 0 ? (
+                          <div className="text-center py-12 text-gray-500">
+                            <p>We couldn't find specific products for this design.</p>
+                            <button onClick={handleGenerate} className="mt-4 text-indigo-600 font-medium hover:underline">Try generating again</button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-4 mb-4">
+                              {shoppingList.map((item, idx) => (
+                                <div key={idx} className="group border border-gray-100 rounded-2xl p-4 hover:border-indigo-200 hover:shadow-md transition-all bg-gray-50/50 hover:bg-white flex gap-4">
+                                  <div className="pt-1">
+                                    <input 
+                                      type="checkbox" 
+                                      checked={selectedProductsToRegenerate.includes(idx)} 
+                                      onChange={() => {
+                                        setSelectedProductsToRegenerate(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]);
                                       }}
+                                      className="w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                                     />
                                   </div>
-                                )}
-                                <div className="flex-1 flex justify-between items-start gap-4">
-                                  <div>
-                                    <span className="text-xs font-bold tracking-wider text-indigo-600 uppercase mb-1 block">
-                                      {item.category}
-                                    </span>
-                                    <h4 className="font-semibold text-gray-900 leading-tight mb-1">{item.name}</h4>
-                                    <p className="text-sm text-gray-500 mb-3">{item.vendor} • {item.price}</p>
-                                    <p className="text-sm text-gray-600 bg-gray-100 p-2.5 rounded-lg italic">
-                                      "{item.reason}"
-                                    </p>
+                                  {item.imageUrl && (
+                                    <div className="w-24 h-24 shrink-0 rounded-xl overflow-hidden bg-gray-100 border border-gray-200">
+                                      <img 
+                                        src={item.imageUrl} 
+                                        alt={item.name} 
+                                        className="w-full h-full object-cover" 
+                                        referrerPolicy="no-referrer" 
+                                        onError={(e) => {
+                                          const parent = e.currentTarget.parentElement;
+                                          if (parent) parent.style.display = 'none';
+                                        }}
+                                      />
+                                    </div>
+                                  )}
+                                  <div className="flex-1 flex justify-between items-start gap-4">
+                                    <div>
+                                      <span className="text-xs font-bold tracking-wider text-indigo-600 uppercase mb-1 block">{item.category}</span>
+                                      <h4 className="font-semibold text-gray-900 leading-tight mb-1">{item.name}</h4>
+                                      <p className="text-sm text-gray-500 mb-3">{item.vendor} • {item.price}</p>
+                                    </div>
+                                    <a href={item.productUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 w-10 h-10 bg-gray-900 text-white rounded-full flex items-center justify-center hover:bg-indigo-600 transition-colors shadow-sm">
+                                      <ExternalLink className="w-4 h-4" />
+                                    </a>
                                   </div>
-                                  <a 
-                                    href={item.productUrl} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer"
-                                    className="shrink-0 w-10 h-10 bg-gray-900 text-white rounded-full flex items-center justify-center hover:bg-indigo-600 transition-colors shadow-sm"
-                                    title="View Product"
-                                  >
-                                    <ExternalLink className="w-4 h-4" />
-                                  </a>
                                 </div>
-                              </div>
-                            ))}
-                          </div>
-                          <div className="pt-4 border-t border-gray-100">
-                            <button
-                              onClick={handleRegenerateWithProducts}
-                              disabled={isRegeneratingWithProducts}
-                              className="w-full px-6 py-3 bg-indigo-50 text-indigo-700 font-medium rounded-xl hover:bg-indigo-100 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {isRegeneratingWithProducts ? (
-                                <>
+                              ))}
+                            </div>
+                            <div className="pt-4 border-t border-gray-100">
+                              <button
+                                onClick={handleRegenerateWithProducts}
+                                disabled={isRegeneratingWithProducts}
+                                className="w-full px-6 py-4 bg-indigo-50 text-indigo-700 font-bold rounded-xl hover:bg-indigo-100 transition-colors flex items-center justify-center gap-2"
+                              >
+                                {isRegeneratingWithProducts ? (
                                   <RefreshCw className="w-5 h-5 animate-spin" />
-                                  Regenerating Design...
-                                </>
-                              ) : (
-                                <>
+                                ) : (
                                   <Wand2 className="w-5 h-5" />
-                                  Regenerate Design with ({selectedProductsToRegenerate.length}) Products
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                                )}
+                                Regenerate with Selected Products ({selectedProductsToRegenerate.length})
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
