@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Upload, Image as ImageIcon, Download, Printer, Wand2, RefreshCw, ChevronRight, ChevronLeft, ShoppingBag, CheckCircle2, ExternalLink, Settings, X, MapPin, MessageSquare, Send, Mic, MicOff, Volume2, VolumeX } from 'lucide-react';
 import CompareSlider from '../components/CompareSlider';
 import StyleSelector, { STYLES } from '../components/StyleSelector';
@@ -20,6 +21,7 @@ const BUDGETS = [
 ];
 
 export default function Home() {
+  const routerLocation = useLocation();
   const [step, setStep] = useState(1);
   const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [originalMimeType, setOriginalMimeType] = useState<string>('');
@@ -184,6 +186,50 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem('restyle_admin_shops', JSON.stringify(savedShops));
   }, [savedShops]);
+
+  useEffect(() => {
+    if (routerLocation.state?.designToEdit) {
+      const design = routerLocation.state.designToEdit;
+      
+      const loadDesignToStudio = async () => {
+        setLoadingState('Opening saved design...');
+        setStep(3);
+        try {
+          const toBase64 = async (url: string) => {
+            const res = await fetch(url);
+            const blob = await res.blob();
+            return new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+          };
+
+          const origB64 = await toBase64(design.original_image);
+          const genB64 = await toBase64(design.generated_image);
+
+          setOriginalImage(origB64);
+          setGeneratedImage(genB64);
+          setOriginalMimeType('image/png');
+          setRoomType(design.room_type);
+          setSelectedStyle(design.style);
+          setHasSourcedProducts(false);
+          setShoppingList([]);
+          setChatHistory([]);
+          setStep(4);
+        } catch (e) {
+          console.error("Failed to load design", e);
+          alert("Could not load design images.");
+          setStep(1);
+        } finally {
+          window.history.replaceState({}, document.title);
+        }
+      };
+      
+      loadDesignToStudio();
+    }
+  }, [routerLocation.state]);
 
   const handleAddShop = (shop: string) => setSavedShops(prev => [...prev, shop]);
   const handleRemoveShop = (shop: string) => {

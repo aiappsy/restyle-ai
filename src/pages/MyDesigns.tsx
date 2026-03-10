@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getSavedDesigns } from '../services/ai';
-import { Download, ChevronLeft, Image as ImageIcon } from 'lucide-react';
+import { Download, ChevronLeft, Image as ImageIcon, Wand2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 interface SavedDesign {
   id: number;
@@ -14,6 +15,11 @@ interface SavedDesign {
 export default function MyDesigns() {
   const [designs, setDesigns] = useState<SavedDesign[]>([]);
   const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  const handleEdit = (design: SavedDesign) => {
+    navigate('/', { state: { designToEdit: design } });
+  };
 
   useEffect(() => {
     loadDesigns();
@@ -88,21 +94,29 @@ export default function MyDesigns() {
                     <h3 className="font-bold text-gray-900 text-lg mb-1">{design.style}</h3>
                     <p className="text-sm font-medium text-gray-500">{design.room_type} • {new Date(design.created_at).toLocaleDateString()}</p>
                   </div>
-                  <div className="mt-auto grid grid-cols-2 gap-2">
+                  <div className="mt-auto flex flex-col gap-2">
                     <button 
-                      onClick={() => handleExport(design.generated_image, design.style)}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-50 hover:bg-indigo-50 hover:text-indigo-600 text-gray-700 text-sm font-medium rounded-xl transition-colors border border-gray-200"
+                      onClick={() => handleEdit(design)}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-xl transition-colors shadow-sm"
                     >
-                      <Download className="w-4 h-4" /> HD Export
+                      <Wand2 className="w-4 h-4" /> Open in Studio
                     </button>
-                    <a 
-                      href={design.generated_image} 
-                      target="_blank" 
-                      rel="noreferrer"
-                      className="flex-1 flex items-center justify-center px-4 py-2.5 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium rounded-xl transition-colors shadow-sm"
-                    >
-                      View Full
-                    </a>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button 
+                        onClick={() => handleExport(design.generated_image, design.style)}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-medium rounded-xl transition-colors border border-gray-200"
+                      >
+                        <Download className="w-4 h-4" /> HD Export
+                      </button>
+                      <a 
+                        href={design.generated_image} 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="flex-1 flex items-center justify-center px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-medium rounded-xl transition-colors border border-gray-200"
+                      >
+                        View Full
+                      </a>
+                    </div>
                   </div>
                 </div>
               </div>
