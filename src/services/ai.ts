@@ -10,6 +10,13 @@ export interface ProductItem {
   coordinates?: { x: number, y: number };
 }
 
+export interface PlacedItem {
+  id: string;
+  category: string;
+  x: number;
+  y: number;
+}
+
 const getHeaders = () => {
   const token = localStorage.getItem('restyle_token');
   return {
@@ -238,3 +245,54 @@ export async function generateWithAgents(
   });
 }
 
+// --- NEW INTERACTIVE LAYOUT FLOW ---
+
+export async function sourceProductsForLayout(
+  base64Image: string,
+  mimeType: string,
+  style: string,
+  roomType: string,
+  budget: string,
+  placedItems: PlacedItem[],
+  customShops?: string[],
+  location?: string
+): Promise<Record<string, ProductItem[]>> {
+  const response = await fetch('/api/source-from-layout', {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      base64Image,
+      mimeType,
+      style,
+      roomType,
+      budget,
+      placedItems,
+      customShops,
+      location
+    })
+  });
+  const data = await handleResponse(response);
+  return data.categorizedProducts;
+}
+
+export async function renderFinalLayout(
+  base64Image: string,
+  mimeType: string,
+  style: string,
+  roomType: string,
+  selectedProducts: ProductItem[]
+): Promise<string> {
+  const response = await fetch('/api/render-final-layout', {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({
+      base64Image,
+      mimeType,
+      style,
+      roomType,
+      selectedProducts
+    })
+  });
+  const data = await handleResponse(response);
+  return data.result;
+}
