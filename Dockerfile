@@ -24,6 +24,7 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY server.js ./
 COPY db.js ./
+COPY agents.js ./
 
 # Expose the API port
 EXPOSE 3001
