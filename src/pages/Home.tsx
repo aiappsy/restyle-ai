@@ -4,7 +4,7 @@ import { Upload, Image as ImageIcon, Download, Printer, Wand2, RefreshCw, Chevro
 import CompareSlider from '../components/CompareSlider';
 import StyleSelector, { STYLES } from '../components/StyleSelector';
 import AdminModal from '../components/AdminModal';
-import { generateRoomDesign, generateShoppingList, ProductItem, sendChatMessage, regenerateWithProducts, generateSpeech, saveDesign, locateProductsInImage } from '../services/ai';
+import { generateRoomDesign, generateShoppingList, ProductItem, sendChatMessage, regenerateWithProducts, generateSpeech, saveDesign, locateProductsInImage, generateWithAgents } from '../services/ai';
 import { useAuth } from '../contexts/AuthContext';
 
 const ROOM_TYPES = ['Living Room', 'Bedroom', 'Dining Room', 'Home Office', 'Bathroom', 'Kitchen'];
@@ -58,6 +58,9 @@ export default function Home() {
   const [isRegeneratingWithProducts, setIsRegeneratingWithProducts] = useState(false);
   const [activeTab, setActiveTab] = useState<'chat' | 'shop'>('shop');
   const [activeProductId, setActiveProductId] = useState<number | null>(null);
+
+  // Multi-Agent State
+  const [agentProgress, setAgentProgress] = useState<{message: string} | null>(null);
 
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -305,38 +308,38 @@ export default function Home() {
     setHasSourcedProducts(false);
     setShoppingList([]);
     setChatHistory([]);
+    setAgentProgress(null);
     
     try {
-      setLoadingState('Sourcing perfect real-world products...');
+      setLoadingState('Initializing AI Agents...');
       setIsSourcingProducts(true);
       
-      const customShops = searchMode === 'manual' && selectedShops.length > 0 ? selectedShops : undefined;
-      const products = await generateShoppingList(
-        originalImage, 
-        originalMimeType, 
-        selectedStyle, 
-        roomType, 
-        budget, 
-        customShops,
+      const customShopsList = searchMode === 'manual' && selectedShops.length > 0 ? selectedShops : undefined;
+      const mimeType = originalMimeType || 'image/jpeg';
+      
+      const response = await generateWithAgents(
+        originalImage,
+        mimeType,
+        selectedStyle,
+        roomType,
+        budget,
+        customShopsList,
         location,
-        shoppingMethod
+        (update) => {
+          if (update.type === 'status') {
+            setAgentProgress({ message: update.message || '' });
+          }
+        }
       );
       
+      const products = response.products;
       setShoppingList(products);
       setSelectedProductsToRegenerate(products.map((_, idx) => idx));
       setHasSourcedProducts(true);
       setIsSourcingProducts(false);
+      setAgentProgress(null);
       
-      setLoadingState('Reimagining your space with these products...');
-      
-      // Pass originalImage to regenerateWithProducts, bypassing the fantasy room generation!
-      const newImage = await regenerateWithProducts(
-        originalImage, 
-        originalMimeType,
-        selectedStyle,
-        roomType,
-        products
-      );
+      const newImage = response.result;
       setGeneratedImage(newImage);
 
       try {
@@ -829,9 +832,17 @@ export default function Home() {
               </div>
             </div>
             <h2 className="text-3xl font-bold tracking-tight mb-4">{loadingState}</h2>
-            <p className="text-gray-500 text-lg max-w-md mx-auto">
-              Our AI is analyzing your space and applying the {selectedStyle} style.
-            </p>
+            {agentProgress ? (
+              <div className="mt-6 flex justify-center">
+                <p className="inline-block bg-indigo-50 text-indigo-700 font-mono text-sm px-4 py-2 rounded-lg border border-indigo-100 font-medium">
+                  {`> ${agentProgress.message}`}
+                </p>
+              </div>
+            ) : (
+              <p className="text-gray-500 text-lg max-w-md mx-auto">
+                Our AI agents are analyzing your space and applying the {selectedStyle} style.
+              </p>
+            )}
           </div>
         )}
 

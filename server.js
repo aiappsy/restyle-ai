@@ -7,6 +7,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import db from './db.js';
+import { runAgentWorkflow } from './agents.js';
 
 dotenv.config();
 
@@ -536,6 +537,50 @@ RULES:
   } catch (error) {
     console.error("Regenerate Products Error:", error);
     res.status(500).json({ error: "Failed to regenerate products" });
+  }
+});
+
+// --- MULTI-AGENT SSE ENDPOINT ---
+app.post('/api/agent/generate-stream', authenticateToken, checkCredits, async (req, res) => {
+  // Set headers for Server-Sent Events (SSE)
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const { base64Image, mimeType, style, roomType, additionalInstructions, budget, customShops, location } = req.body;
+
+  if (!base64Image || !style || !roomType) {
+    res.write(`data: ${JSON.stringify({ type: 'error', message: 'Missing required parameters' })}\n\n`);
+    return res.end();
+  }
+
+  // Define the progress callback that writes to the SSE stream
+  const onProgress = (update) => {
+    res.write(`data: ${JSON.stringify(update)}\n\n`);
+  };
+
+  try {
+    const input = {
+      base64Image,
+      mimeType,
+      style,
+      roomType,
+      additionalInstructions,
+      budget,
+      customShops: customShops ? customShops : [],
+      location
+    };
+
+    const finalResult = await runAgentWorkflow(input, onProgress);
+    
+    // Deduct credit only upon successful complete generation
+    deductCredit(req.user.userId);
+    
+    res.write(`data: ${JSON.stringify({ type: 'result', data: finalResult })}\n\n`);
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`);
+  } finally {
+    res.end();
   }
 });
 

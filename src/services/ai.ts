@@ -144,3 +144,97 @@ export async function locateProductsInImage(
   const data = await handleResponse(response);
   return data;
 }
+
+// --- MULTI-AGENT GENERATION (SSE) ---
+export async function generateWithAgents(
+  base64Image: string,
+  mimeType: string,
+  style: string,
+  roomType: string,
+  budget: string,
+  customShops: string[] | undefined,
+  location: string | undefined,
+  onProgress: (update: { type: string, message?: string, data?: any }) => void
+): Promise<{ result: string, products: ProductItem[], designBrief: string }> {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const token = localStorage.getItem('restyle_token');
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const body = JSON.stringify({
+        base64Image,
+        mimeType,
+        style,
+        roomType,
+        budget,
+        customShops,
+        location
+      });
+
+      const response = await fetch('/api/agent/generate-stream', {
+        method: 'POST',
+        headers,
+        body
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'API request failed');
+      }
+
+      if (!response.body) {
+        throw new Error('ReadableStream not supported in this browser.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          
+          // Process fully received server-sent events
+          let breakIdx;
+          while ((breakIdx = buffer.indexOf('\n\n')) >= 0) {
+            const chunk = buffer.slice(0, breakIdx);
+            buffer = buffer.slice(breakIdx + 2);
+            
+            if (chunk.startsWith('data: ')) {
+              try {
+                const dataString = chunk.slice(6);
+                const parsed = JSON.parse(dataString);
+                
+                if (parsed.type === 'error') {
+                  throw new Error(parsed.message);
+                } else if (parsed.type === 'result') {
+                  resolve(parsed.data);
+                  return; // Exit out of the while loop entirely
+                } else {
+                  onProgress(parsed);
+                }
+              } catch (e) {
+                console.warn("Error parsing chunk:", e);
+              }
+            }
+          }
+        }
+        
+        if (done) break;
+      }
+      
+      // If loop finished but result never came
+      reject(new Error("Stream ended before final result was received."));
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
