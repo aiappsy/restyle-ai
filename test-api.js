@@ -1,6 +1,7 @@
-const { GoogleGenAI } = require('@google/genai');
-const fs = require('fs');
-require('dotenv').config();
+import { GoogleGenAI } from '@google/genai';
+import fs from 'fs';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -52,17 +53,22 @@ async function test() {
       console.log("Generative Model Success:", !!response);
       return;
     } catch (e) {
-      console.error("Generative Model ERROR:", e.message);
+      console.log("Generative Model ERROR json:", JSON.stringify(e, null, 2));
+      console.log("Generative Model ERROR message:", e.message);
       
       console.log("Testing Fallback...");
-      const visionSynth = await ai.models.generateContent({
-        model: 'gemini-3.1-pro-preview',
-        contents: [
-          ...rawProductParts,
-          { text: `Analyze these images.` }
-        ]
-      });
-      console.log("Vision Synth Success:", visionSynth.text);
+      try {
+        const visionSynth = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: [
+            ...rawProductParts,
+            { text: `Analyze these images.` }
+          ]
+        });
+        console.log("Vision Synth Success:", visionSynth.text);
+      } catch (err) {
+        console.log("Vision Synth ERROR json:", JSON.stringify(err, null, 2));
+      }
     }
 
   } catch (error) {

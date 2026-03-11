@@ -7,7 +7,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import db from './db.js';
-import { runAgentWorkflow } from './agents.js';
+import { runAgentWorkflow, runSourcingAgentForLayout, runRenderAgentForLayout } from './agents.js';
 
 dotenv.config();
 
@@ -366,10 +366,10 @@ Search the web for 6 specific, real furniture and decor items (e.g., sofa, rug, 
 You MUST use the googleSearch tool to find actual products.
 CRITICAL: The imageUrl MUST be a direct, publicly accessible image URL ending in .jpg or .png. If you cannot find a verified, direct image URL from your search, you MUST leave the imageUrl field completely blank (""). DO NOT hallucinate URLs.
 ALSO CRITICAL: You must write a "visualDescription" for each product based on the images and descriptions you find. This should be a 2-sentence microscopic visual description (color, material, shape) so an artist can perfectly draw it without seeing the picture.
-Return the result as a JSON array.`;
+Return the result EXACTLY as a raw JSON array of objects with keys: name, price, vendor, productUrl, imageUrl, category, reason, visualDescription. No markdown formatting.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.1-pro-preview',
+      model: 'gemini-2.5-pro',
       contents: [
         {
           role: 'user',
@@ -380,30 +380,14 @@ Return the result as a JSON array.`;
         }
       ],
       config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING, description: "Product name" },
-              price: { type: Type.STRING, description: "Price with currency symbol" },
-              vendor: { type: Type.STRING, description: "Store name (e.g., West Elm, Wayfair, or local store name)" },
-              productUrl: { type: Type.STRING, description: "Real URL to the product or store page" },
-              imageUrl: { type: Type.STRING, description: "Direct URL to an image of the product" },
-              category: { type: Type.STRING, description: "e.g., Seating, Lighting, Decor" },
-              reason: { type: Type.STRING, description: "Why this fits the design and shopping preference" },
-              visualDescription: { type: Type.STRING, description: "Highly detailed visual description of the product (color, material, shape) for an artist to draw it" }
-            },
-            required: ["name", "price", "vendor", "productUrl", "imageUrl", "category", "reason", "visualDescription"]
-          }
-        }
+        tools: [{ googleSearch: {} }]
       }
     });
 
     deductCredit(req.user.userId);
-    const text = response.text || "[]";
+    let text = response.text || "[]";
+    const match = text.match(/\[[\s\S]*\]/);
+    if (match) text = match[0];
     res.json({ products: JSON.parse(text) });
   } catch (error) {
     console.error("Shopping List Error:", error);
@@ -426,7 +410,7 @@ ${products.map(p => `ID ${p.id}: ${p.name} (${p.category})`).join('\n')}
 Return the result as a JSON array.`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.1-pro-preview',
+      model: 'gemini-2.5-pro',
       contents: [
         {
           role: 'user',
@@ -581,6 +565,27 @@ app.post('/api/agent/generate-stream', authenticateToken, checkCredits, async (r
     res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`);
   } finally {
     res.end();
+  }
+});
+
+app.post('/api/source-from-layout', authenticateToken, checkCredits, async (req, res) => {
+  try {
+    const categorizedProducts = await runSourcingAgentForLayout(req.body);
+    res.json({ categorizedProducts });
+  } catch (error) {
+    console.error("Layout Sourcing Error:", error);
+    res.status(500).json({ error: "Failed to source products for layout" });
+  }
+});
+
+app.post('/api/render-final-layout', authenticateToken, checkCredits, async (req, res) => {
+  try {
+    const resultImageBase64 = await runRenderAgentForLayout(req.body);
+    deductCredit(req.user.userId);
+    res.json({ result: resultImageBase64 });
+  } catch (error) {
+    console.error("Layout Render Error:", error);
+    res.status(500).json({ error: "Failed to render final layout" });
   }
 });
 
