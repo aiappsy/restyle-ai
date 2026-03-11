@@ -4,7 +4,7 @@ import { Upload, Image as ImageIcon, Download, Printer, Wand2, RefreshCw, Chevro
 import CompareSlider from '../components/CompareSlider';
 import StyleSelector, { STYLES } from '../components/StyleSelector';
 import AdminModal from '../components/AdminModal';
-import { generateRoomDesign, generateShoppingList, ProductItem, sendChatMessage, regenerateWithProducts, generateSpeech, saveDesign, locateProductsInImage, generateWithAgents } from '../services/ai';
+import { generateRoomDesign, generateShoppingList, ProductItem, PlacedItem, sourceProductsForLayout, renderFinalLayout, sendChatMessage, regenerateWithProducts, generateSpeech, saveDesign, locateProductsInImage } from '../services/ai';
 import { useAuth } from '../contexts/AuthContext';
 
 const ROOM_TYPES = ['Living Room', 'Bedroom', 'Dining Room', 'Home Office', 'Bathroom', 'Kitchen'];
@@ -61,6 +61,12 @@ export default function Home() {
 
   // Multi-Agent State
   const [agentProgress, setAgentProgress] = useState<{message: string} | null>(null);
+
+  // New Interactive Layout State
+  const [placedItems, setPlacedItems] = useState<PlacedItem[]>([]);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [sourcedOptions, setSourcedOptions] = useState<Record<string, ProductItem[]>>({});
+  const [selectedProductsMap, setSelectedProductsMap] = useState<Record<string, ProductItem>>({});
 
   // Chat State
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
@@ -192,6 +198,7 @@ export default function Home() {
     localStorage.setItem('restyle_admin_shops', JSON.stringify(savedShops));
   }, [savedShops]);
 
+
   useEffect(() => {
     if (routerLocation.state?.designToEdit) {
       const design = routerLocation.state.designToEdit;
@@ -302,110 +309,118 @@ export default function Home() {
     reader.readAsDataURL(file);
   };
 
-  const handleGenerate = async () => {
+  const handleContinueToLayout = () => {
     if (!originalImage) return;
-    setStep(3);
-    setHasSourcedProducts(false);
+    setStep(3); // Go to Layout Canvas
+    setPlacedItems([]);
+    setActiveCategory(null);
+    setSourcedOptions({});
+    setSelectedProductsMap({});
     setShoppingList([]);
-    setChatHistory([]);
-    setAgentProgress(null);
+  };
+
+  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!activeCategory || isSourcingProducts) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
     
+    const newItem: PlacedItem = {
+      id: Math.random().toString(36).substr(2, 9),
+      category: activeCategory,
+      x,
+      y
+    };
+    
+    setPlacedItems(prev => [...prev, newItem]);
+    setActiveCategory(null); // Reset after placing
+  };
+
+  const handleSourceProducts = async () => {
+    if (placedItems.length === 0) {
+      alert("Please place at least one item on the room layout first.");
+      return;
+    }
+    
+    setStep(4); // Go to Product Selection loading state
+    setLoadingState('Sourcing real products for your layout...');
+    setIsSourcingProducts(true);
+
     try {
-      setLoadingState('Initializing AI Agents...');
-      setIsSourcingProducts(true);
-      
       const customShopsList = searchMode === 'manual' && selectedShops.length > 0 ? selectedShops : undefined;
       const mimeType = originalMimeType || 'image/jpeg';
       
-      const response = await generateWithAgents(
-        originalImage,
+      const categorizedProducts = await sourceProductsForLayout(
+        originalImage!,
         mimeType,
         selectedStyle,
         roomType,
         budget,
+        placedItems,
         customShopsList,
-        location,
-        (update) => {
-          if (update.type === 'status') {
-            setAgentProgress({ message: update.message || '' });
-          }
-        }
+        location
       );
-      
-      const products = response.products;
-      setShoppingList(products);
-      setSelectedProductsToRegenerate(products.map((_, idx) => idx));
-      setHasSourcedProducts(true);
-      setIsSourcingProducts(false);
-      setAgentProgress(null);
-      
-      const newImage = response.result;
-      setGeneratedImage(newImage);
 
-      try {
-        setLoadingState('Adding interactive design hotspots...');
-        const locResponse = await locateProductsInImage(newImage, 'image/png', products);
-        if (locResponse && locResponse.coordinates) {
-          const updatedProducts = [...products];
-          locResponse.coordinates.forEach(coord => {
-            if (updatedProducts[coord.productId]) {
-               updatedProducts[coord.productId].coordinates = { x: coord.x, y: coord.y };
-            }
-          });
-          setShoppingList(updatedProducts);
+      setSourcedOptions(categorizedProducts);
+      setIsSourcingProducts(false);
+      
+      // Auto-select the first option for each placed item by default
+      const defaultSelections: Record<string, ProductItem> = {};
+      placedItems.forEach(item => {
+        const options = categorizedProducts[item.category];
+        if (options && options.length > 0) {
+          defaultSelections[item.id] = options[0];
         }
-      } catch (e) {
-        console.error("Failed to map hotspots", e);
-      }
+      });
+      setSelectedProductsMap(defaultSelections);
 
-      setStep(4);
     } catch (error) {
-      console.error("Pipeline failed:", error);
-      alert("Failed to source products or design room. Please try again.");
+      console.error("Sourcing failed:", error);
+      alert("Failed to source products. Please try again.");
       setIsSourcingProducts(false);
-      setStep(2);
+      setStep(3);
     }
   };
 
-  const handleRegenerateWithProducts = async () => {
-    if (!generatedImage || shoppingList.length === 0) return;
-    
-    const productsToUse = shoppingList.filter((_, idx) => selectedProductsToRegenerate.includes(idx));
-    if (productsToUse.length === 0) {
-      alert("Please select at least one product to redesign with.");
+  const handleRenderFinal = async () => {
+    // Check if every placedItem has a selected product
+    const allSelected = placedItems.every(item => selectedProductsMap[item.id]);
+    if (!allSelected) {
+      alert("Please select a product option for every placed item before rendering.");
       return;
     }
 
-    setIsRegeneratingWithProducts(true);
+    setStep(5); // Go to Rendering state
+    setLoadingState('Rendering final photorealistic design...');
+    setGeneratedImage(null);
+
+    // Prepare final products array with precise X/Y
+    const finalSelectedProducts: ProductItem[] = placedItems.map(item => {
+      const prod = selectedProductsMap[item.id];
+      return {
+        ...prod,
+        coordinates: { x: Math.round(item.x), y: Math.round(item.y) }
+      };
+    });
+
     try {
-      const newImage = await regenerateWithProducts(
-        generatedImage,
-        'image/png', // assuming the generated image is png
+      const mimeType = originalMimeType || 'image/jpeg';
+      const resultImage = await renderFinalLayout(
+        originalImage!,
+        mimeType,
         selectedStyle,
         roomType,
-        productsToUse
+        finalSelectedProducts
       );
-      setGeneratedImage(newImage);
-      try {
-        const locResponse = await locateProductsInImage(newImage, 'image/png', shoppingList.filter((_, idx) => selectedProductsToRegenerate.includes(idx)).map(p => ({...p, id: shoppingList.indexOf(p)})));
-        if (locResponse && locResponse.coordinates) {
-          const updatedProducts = [...shoppingList];
-          locResponse.coordinates.forEach(coord => {
-            if (updatedProducts[coord.productId]) {
-               updatedProducts[coord.productId].coordinates = { x: coord.x, y: coord.y };
-            }
-          });
-          setShoppingList(updatedProducts);
-        }
-      } catch (e) {
-        console.error("Failed to map hotspots", e);
-      }
-      alert("Design successfully regenerated with the sourced products!");
+
+      setGeneratedImage(resultImage);
+      setShoppingList(finalSelectedProducts); // For the UI
+      setHasSourcedProducts(true);
+
     } catch (error) {
-      console.error("Regeneration failed:", error);
-      alert("Failed to regenerate design with products. Please try again.");
-    } finally {
-      setIsRegeneratingWithProducts(false);
+      console.error("Render failed:", error);
+      alert("Failed to render the final image. Please try again.");
+      setStep(4); // Back to selection
     }
   };
 
@@ -810,10 +825,10 @@ export default function Home() {
 
               <div className="mt-12 pt-8 border-t border-gray-100 flex justify-end">
                 <button
-                  onClick={handleGenerate}
+                  onClick={handleContinueToLayout}
                   className="px-8 py-4 bg-gray-900 text-white font-medium rounded-xl hover:bg-gray-800 transition-colors flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transform"
                 >
-                  Generate My Restyle
+                  Continue to Layout Planner
                   <ChevronRight className="w-5 h-5" />
                 </button>
               </div>
@@ -821,39 +836,237 @@ export default function Home() {
           </div>
         )}
 
-        {/* STEP 3: GENERATING */}
-        {step === 3 && (
-          <div className="max-w-2xl mx-auto text-center py-20 animate-in fade-in duration-500">
-            <div className="relative w-32 h-32 mx-auto mb-8">
-              <div className="absolute inset-0 border-4 border-indigo-100 rounded-full"></div>
-              <div className="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <Wand2 className="w-10 h-10 text-indigo-600 animate-pulse" />
+        {/* STEP 3: INTERACTIVE LAYOUT PLANNER */}
+        {step === 3 && originalImage && (
+          <div className="animate-in fade-in duration-500 max-w-6xl mx-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold">Plan Your Layout</h2>
+              <button 
+                onClick={() => setStep(2)}
+                className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1"
+              >
+                <ChevronLeft className="w-4 h-4" /> Back to Customization
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+              {/* Toolbar */}
+              <div className="lg:col-span-3 space-y-4">
+                <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
+                  <h3 className="font-semibold text-gray-900 mb-4">1. Select an item</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {['Sofa', 'Accent Chair', 'Coffee Table', 'Rug', 'Table Lamp', 'Floor Lamp', 'Pendant Light', 'Wall Art', 'Plant', 'TV Stand', 'Bed', 'Nightstand', 'Dining Table', 'Dining Chair'].map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setActiveCategory(activeCategory === cat ? null : cat)}
+                        className={`text-xs p-2 rounded-lg border font-medium transition-all text-center ${
+                          activeCategory === cat
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                            : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-gray-300 hover:bg-white'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                  
+                  <div className="mt-6 p-4 bg-indigo-50 rounded-xl border border-indigo-100">
+                    <h3 className="font-semibold text-indigo-900 text-sm mb-2">2. Click image to place</h3>
+                    <p className="text-xs text-indigo-700">Select an item above, then click anywhere on your room photo to mark where you want it to go.</p>
+                  </div>
+
+                  <div className="mt-6">
+                     <h3 className="font-semibold text-gray-900 text-sm mb-3">Placed Items ({placedItems.length})</h3>
+                     {placedItems.length === 0 ? (
+                       <p className="text-xs text-gray-500 italic">No items placed yet.</p>
+                     ) : (
+                       <ul className="space-y-2 max-h-48 overflow-y-auto">
+                         {placedItems.map(item => (
+                           <li key={item.id} className="flex items-center justify-between text-xs p-2 bg-gray-50 rounded border border-gray-100">
+                             <div className="flex items-center gap-2">
+                               <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
+                               <span className="font-medium text-gray-700">{item.category}</span>
+                             </div>
+                             <button
+                               onClick={() => setPlacedItems(prev => prev.filter(p => p.id !== item.id))}
+                               className="text-gray-400 hover:text-red-500"
+                             >
+                               <X className="w-3 h-3" />
+                             </button>
+                           </li>
+                         ))}
+                       </ul>
+                     )}
+                  </div>
+
+                  <button
+                    onClick={handleSourceProducts}
+                    disabled={placedItems.length === 0}
+                    className="w-full mt-6 px-4 py-3 bg-gray-900 text-white font-medium rounded-xl hover:bg-gray-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-2 shadow-md"
+                  >
+                    Find Real Products
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Canvas */}
+              <div className="lg:col-span-9">
+                <div 
+                  className={`relative rounded-3xl overflow-hidden bg-gray-100 border-2 shadow-sm transition-all ${
+                    activeCategory ? 'border-indigo-400 cursor-crosshair' : 'border-transparent'
+                  }`}
+                  onClick={handleCanvasClick}
+                >
+                  <img src={originalImage} alt="Room Layout" className="w-full h-auto object-contain block pointer-events-none select-none" />
+                  
+                  {/* Markers */}
+                  {placedItems.map((item, idx) => (
+                    <div 
+                      key={item.id}
+                      className="absolute w-6 h-6 -ml-3 -mt-3 bg-indigo-600 border-2 border-white text-white rounded-full shadow-lg flex items-center justify-center text-[10px] font-bold z-10 animate-in zoom-in pointer-events-none"
+                      style={{ left: `${item.x}%`, top: `${item.y}%` }}
+                    >
+                      {idx + 1}
+                    </div>
+                  ))}
+
+                  {activeCategory && (
+                     <div className="absolute top-4 left-0 right-0 flex justify-center pointer-events-none">
+                       <span className="bg-gray-900/80 text-white px-4 py-2 rounded-full text-sm font-medium backdrop-blur-sm shadow-xl">
+                         Click anywhere to place the {activeCategory}
+                       </span>
+                     </div>
+                  )}
+                </div>
               </div>
             </div>
-            <h2 className="text-3xl font-bold tracking-tight mb-4">{loadingState}</h2>
-            {agentProgress ? (
-              <div className="mt-6 flex justify-center">
-                <p className="inline-block bg-indigo-50 text-indigo-700 font-mono text-sm px-4 py-2 rounded-lg border border-indigo-100 font-medium">
-                  {`> ${agentProgress.message}`}
-                </p>
-              </div>
-            ) : (
-              <p className="text-gray-500 text-lg max-w-md mx-auto">
-                Our AI agents are analyzing your space and applying the {selectedStyle} style.
-              </p>
-            )}
           </div>
         )}
 
-        {/* STEP 4: RESULTS */}
-        {step === 4 && generatedImage && (
+        {/* STEP 4: PRODUCT SELECTION & SOURCING */}
+        {step === 4 && (
+          <div className="animate-in fade-in duration-500 max-w-6xl mx-auto">
+             {isSourcingProducts ? (
+               <div className="text-center py-20">
+                 <div className="relative w-32 h-32 mx-auto mb-8">
+                   <div className="absolute inset-0 border-4 border-indigo-100 rounded-full"></div>
+                   <div className="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
+                   <div className="absolute inset-0 flex items-center justify-center">
+                     <ShoppingBag className="w-10 h-10 text-indigo-600 animate-pulse" />
+                   </div>
+                 </div>
+                 <h2 className="text-3xl font-bold tracking-tight mb-4">{loadingState}</h2>
+                 <p className="text-gray-500 text-lg max-w-md mx-auto">
+                   Our AI is searching the web to find the perfect real-world products matching your layout and {selectedStyle} style.
+                 </p>
+               </div>
+             ) : (
+               <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                    <div>
+                      <h2 className="text-2xl font-bold">Select Your Exact Products</h2>
+                      <p className="text-gray-500 text-sm">Choose one specific product for each item you placed.</p>
+                    </div>
+                    <button
+                      onClick={handleRenderFinal}
+                      className="px-6 py-3 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 transition-colors shadow-md flex items-center gap-2"
+                    >
+                      <Wand2 className="w-5 h-5" />
+                      Render Final Design
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    {/* Left: Map Reference */}
+                    <div className="lg:col-span-5 relative hidden lg:block">
+                       <div className="sticky top-24 bg-white p-2 rounded-2xl border border-gray-100 shadow-sm">
+                         <div className="relative rounded-xl overflow-hidden">
+                           <img src={originalImage!} alt="Map" className="w-full h-auto object-cover opacity-50" />
+                           {placedItems.map((item, idx) => {
+                             const isSelected = selectedProductsMap[item.id] !== undefined;
+                             return (
+                               <div 
+                                 key={item.id}
+                                 className={`absolute -ml-4 -mt-4 w-8 h-8 rounded-full border-2 shadow-md flex items-center justify-center text-xs font-bold transition-all ${
+                                   isSelected ? 'bg-indigo-600 border-white text-white scale-110' : 'bg-white border-gray-300 text-gray-500'
+                                 }`}
+                                 style={{ left: `${item.x}%`, top: `${item.y}%` }}
+                               >
+                                 {isSelected && selectedProductsMap[item.id].imageUrl ? (
+                                   <img src={selectedProductsMap[item.id].imageUrl} className="w-full h-full rounded-full object-cover" alt="" />
+                                 ) : (
+                                   idx + 1
+                                 )}
+                               </div>
+                             );
+                           })}
+                         </div>
+                       </div>
+                    </div>
+
+                    {/* Right: Product Lists */}
+                    <div className="lg:col-span-7 space-y-8 pb-32">
+                       {placedItems.map((item, idx) => {
+                         const options = sourcedOptions[item.category] || [];
+                         const selectedProd = selectedProductsMap[item.id];
+                         
+                         return (
+                           <div key={item.id} className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm relative pt-8">
+                             <div className="absolute top-0 left-6 -translate-y-1/2 flex items-center gap-3">
+                                <div className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold text-sm shadow-md ring-4 ring-white shrink-0">
+                                  {idx + 1}
+                                </div>
+                                <h3 className="font-bold text-gray-900 text-lg bg-white px-2">Pick a {item.category}</h3>
+                             </div>
+                             
+                             {options.length === 0 ? (
+                               <div className="p-4 text-center text-gray-500 italic mt-2">No products found for this category.</div>
+                             ) : (
+                               <div className="flex gap-4 overflow-x-auto pb-4 snap-x custom-scrollbar mt-2">
+                                 {options.map((prod, optIdx) => {
+                                   const isActive = selectedProd?.name === prod.name;
+                                   return (
+                                     <div 
+                                       key={optIdx}
+                                       onClick={() => setSelectedProductsMap(prev => ({ ...prev, [item.id]: prod }))}
+                                       className={`snap-start shrink-0 w-48 rounded-xl border-2 p-3 cursor-pointer transition-all hover:-translate-y-1 ${
+                                         isActive ? 'border-indigo-600 bg-indigo-50/20 shadow-md' : 'border-gray-100 hover:border-indigo-200 bg-white'
+                                       }`}
+                                     >
+                                        <div className="w-full aspect-square bg-gray-100 rounded-lg mb-3 overflow-hidden">
+                                           <img src={prod.imageUrl} alt={prod.name} className="w-full h-full object-cover" />
+                                        </div>
+                                        <h4 className="font-semibold text-gray-900 text-sm line-clamp-2 leading-tight mb-1">{prod.name}</h4>
+                                        <p className="text-xs text-gray-500 mb-2">{prod.vendor} • {prod.price}</p>
+                                        {isActive && (
+                                          <div className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 uppercase">
+                                            <CheckCircle2 className="w-3 h-3" /> Selected
+                                          </div>
+                                        )}
+                                     </div>
+                                   );
+                                 })}
+                               </div>
+                             )}
+                           </div>
+                         );
+                       })}
+                    </div>
+                  </div>
+               </div>
+             )}
+          </div>
+        )}
+
+        {/* STEP 5: RESULTS */}
+        {step === 5 && generatedImage && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold">Your New {roomType}</h2>
               <div className="flex items-center gap-3">
                 <button 
-                  onClick={handleGenerate}
+                  onClick={handleContinueToLayout}
                   className="px-4 py-2 bg-indigo-50 text-indigo-600 font-medium rounded-lg hover:bg-indigo-100 transition-colors flex items-center gap-2"
                 >
                   <RefreshCw className="w-4 h-4" />
@@ -1027,7 +1240,7 @@ export default function Home() {
                         {shoppingList.length === 0 ? (
                           <div className="text-center py-12 text-gray-500">
                             <p>We couldn't find specific products for this design.</p>
-                            <button onClick={handleGenerate} className="mt-4 text-indigo-600 font-medium hover:underline">Try generating again</button>
+                            <button onClick={handleContinueToLayout} className="mt-4 text-indigo-600 font-medium hover:underline">Try generating again</button>
                           </div>
                         ) : (
                           <>
@@ -1042,16 +1255,6 @@ export default function Home() {
                                       : 'border border-gray-100 hover:border-indigo-200 hover:shadow-md bg-gray-50/50 hover:bg-white'
                                   }`}
                                 >
-                                  <div className="pt-1">
-                                    <input 
-                                      type="checkbox" 
-                                      checked={selectedProductsToRegenerate.includes(idx)} 
-                                      onChange={() => {
-                                        setSelectedProductsToRegenerate(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]);
-                                      }}
-                                      className="w-5 h-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                                    />
-                                  </div>
                                   {item.imageUrl && (
                                     <div className="w-24 h-24 shrink-0 rounded-xl overflow-hidden bg-gray-100 border border-gray-200">
                                       <img 
@@ -1078,20 +1281,6 @@ export default function Home() {
                                   </div>
                                 </div>
                               ))}
-                            </div>
-                            <div className="pt-4 border-t border-gray-100">
-                              <button
-                                onClick={handleRegenerateWithProducts}
-                                disabled={isRegeneratingWithProducts}
-                                className="w-full px-6 py-4 bg-indigo-50 text-indigo-700 font-bold rounded-xl hover:bg-indigo-100 transition-colors flex items-center justify-center gap-2"
-                              >
-                                {isRegeneratingWithProducts ? (
-                                  <RefreshCw className="w-5 h-5 animate-spin" />
-                                ) : (
-                                  <Wand2 className="w-5 h-5" />
-                                )}
-                                Regenerate with Selected Products ({selectedProductsToRegenerate.length})
-                              </button>
                             </div>
                           </>
                         )}
