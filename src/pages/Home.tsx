@@ -199,6 +199,7 @@ export default function Home() {
   }, [savedShops]);
 
 
+
   useEffect(() => {
     if (routerLocation.state?.designToEdit) {
       const design = routerLocation.state.designToEdit;
@@ -422,6 +423,12 @@ export default function Home() {
       alert("Failed to render the final image. Please try again.");
       setStep(4); // Back to selection
     }
+  };
+
+  const getProxyUrl = (url: string) => {
+    if (!url) return '';
+    if (url.startsWith('data:')) return url;
+    return `/api/proxy-image?url=${encodeURIComponent(url)}`;
   };
 
   const handleSendMessage = async (text: string) => {
@@ -988,15 +995,18 @@ export default function Home() {
                              return (
                                <div 
                                  key={item.id}
-                                 className={`absolute -ml-4 -mt-4 w-8 h-8 rounded-full border-2 shadow-md flex items-center justify-center text-xs font-bold transition-all ${
-                                   isSelected ? 'bg-indigo-600 border-white text-white scale-110' : 'bg-white border-gray-300 text-gray-500'
+                                 className={`absolute -ml-4 -mt-4 w-10 h-10 rounded-full border-2 shadow-xl flex items-center justify-center text-xs font-bold transition-all duration-500 ${
+                                   isSelected ? 'bg-indigo-600 border-white text-white scale-110' : 'glass border-gray-300 text-gray-700'
                                  }`}
                                  style={{ left: `${item.x}%`, top: `${item.y}%` }}
                                >
                                  {isSelected && selectedProductsMap[item.id].imageUrl ? (
-                                   <img src={selectedProductsMap[item.id].imageUrl} className="w-full h-full rounded-full object-cover" alt="" />
+                                   <div className="relative w-full h-full rounded-full overflow-hidden border border-white/50">
+                                      <img src={getProxyUrl(selectedProductsMap[item.id].imageUrl)} className="w-full h-full object-cover" alt="" />
+                                      <div className="absolute inset-0 bg-indigo-600/20"></div>
+                                   </div>
                                  ) : (
-                                   idx + 1
+                                   <div className="animate-pulse">{idx + 1}</div>
                                  )}
                                </div>
                              );
@@ -1005,57 +1015,76 @@ export default function Home() {
                        </div>
                     </div>
 
-                    {/* Right: Product Lists */}
-                    <div className="lg:col-span-7 space-y-8 pb-32">
-                       {placedItems.map((item, idx) => {
-                         const options = sourcedOptions[item.category] || [];
-                         const selectedProd = selectedProductsMap[item.id];
-                         
-                         return (
-                           <div key={item.id} className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm relative pt-8">
-                             <div className="absolute top-0 left-6 -translate-y-1/2 flex items-center gap-3">
-                                <div className="w-8 h-8 bg-indigo-600 text-white rounded-full flex items-center justify-center font-bold text-sm shadow-md ring-4 ring-white shrink-0">
-                                  {idx + 1}
+                     {/* Right: Product Lists */}
+                     <div className="lg:col-span-7 space-y-12 pb-32">
+                        {placedItems.map((item, idx) => {
+                          const options = sourcedOptions[item.category] || [];
+                          const selectedProd = selectedProductsMap[item.id];
+                          
+                          return (
+                            <div key={item.id} className="glass p-8 rounded-[2.5rem] relative animate-fade-in group" style={{ animationDelay: `${idx * 150}ms` }}>
+                              <div className="absolute -top-6 left-8 flex items-center gap-4">
+                                 <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-bold text-xl shadow-lg ring-8 ring-white/50 backdrop-blur-md transform transition-transform group-hover:rotate-12">
+                                   {idx + 1}
+                                 </div>
+                                 <div className="bg-white/90 backdrop-blur-md px-4 py-2 rounded-xl shadow-sm border border-white/20">
+                                   <h3 className="font-bold text-slate-900 text-lg uppercase tracking-wider">Pick a {item.category}</h3>
+                                 </div>
+                              </div>
+                              
+                              {options.length === 0 ? (
+                                <div className="p-12 text-center text-slate-400 font-medium italic mt-4 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+                                  Our agents are still hunting for the perfect {item.category}...
                                 </div>
-                                <h3 className="font-bold text-gray-900 text-lg bg-white px-2">Pick a {item.category}</h3>
-                             </div>
-                             
-                             {options.length === 0 ? (
-                               <div className="p-4 text-center text-gray-500 italic mt-2">No products found for this category.</div>
-                             ) : (
-                               <div className="flex gap-4 overflow-x-auto pb-4 snap-x custom-scrollbar mt-2">
-                                 {options.map((prod, optIdx) => {
-                                   const isActive = selectedProd?.name === prod.name;
-                                   return (
-                                     <div 
-                                       key={optIdx}
-                                       onClick={() => setSelectedProductsMap(prev => ({ ...prev, [item.id]: prod }))}
-                                       className={`snap-start shrink-0 w-48 rounded-xl border-2 p-3 cursor-pointer transition-all hover:-translate-y-1 ${
-                                         isActive ? 'border-indigo-600 bg-indigo-50/20 shadow-md' : 'border-gray-100 hover:border-indigo-200 bg-white'
-                                       }`}
-                                     >
-                                        <div className="w-full aspect-square bg-gray-100 rounded-lg mb-3 overflow-hidden">
-                                           <img src={prod.imageUrl} alt={prod.name} className="w-full h-full object-cover" />
-                                        </div>
-                                        <h4 className="font-semibold text-gray-900 text-sm line-clamp-2 leading-tight mb-1">{prod.name}</h4>
-                                        <p className="text-xs text-gray-500 mb-2">{prod.vendor} • {prod.price}</p>
-                                        {isActive && (
-                                          <div className="flex items-center gap-1 text-[10px] font-bold text-indigo-600 uppercase">
-                                            <CheckCircle2 className="w-3 h-3" /> Selected
-                                          </div>
-                                        )}
-                                     </div>
-                                   );
-                                 })}
-                               </div>
-                             )}
-                           </div>
-                         );
-                       })}
+                              ) : (
+                                <div className="flex gap-6 overflow-x-auto py-6 px-1 snap-x custom-scrollbar mt-4 mask-fade-edges">
+                                  {options.map((prod, optIdx) => {
+                                    const isActive = selectedProd?.name === prod.name;
+                                    return (
+                                      <div 
+                                        key={optIdx}
+                                        onClick={() => setSelectedProductsMap(prev => ({ ...prev, [item.id]: prod }))}
+                                        className={`snap-center shrink-0 w-64 rounded-3xl border-2 p-4 cursor-pointer transition-all duration-300 premium-card ${
+                                          isActive 
+                                            ? 'border-indigo-500 bg-indigo-50/40 shadow-xl shadow-indigo-100 ring-4 ring-indigo-500/10 scale-[1.02]' 
+                                            : 'border-white/50 bg-white/40 hover:bg-white/60'
+                                        }`}
+                                      >
+                                         <div className="w-full aspect-square bg-white rounded-2xl mb-4 overflow-hidden shadow-inner group/img relative">
+                                            <img 
+                                              src={getProxyUrl(prod.imageUrl)} 
+                                              alt={prod.name} 
+                                              className="w-full h-full object-cover transition-transform duration-700 group-hover/img:scale-110" 
+                                              onError={(e) => {
+                                                (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?q=80&w=300&auto=format&fit=crop';
+                                              }}
+                                            />
+                                            {isActive && (
+                                              <div className="absolute top-2 right-2 bg-indigo-600 text-white p-1.5 rounded-full shadow-lg">
+                                                <CheckCircle2 className="w-4 h-4" />
+                                              </div>
+                                            )}
+                                         </div>
+                                         <div className="px-1">
+                                           <h4 className="font-bold text-slate-800 text-base line-clamp-2 leading-tight mb-2 min-h-[2.5rem]">{prod.name}</h4>
+                                           <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-100">
+                                             <span className="text-sm font-medium text-slate-500 truncate max-w-[60%]">{prod.vendor}</span>
+                                             <span className="text-base font-black text-indigo-600">{prod.price}</span>
+                                           </div>
+                                         </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                     </div>
+
                     </div>
                   </div>
-               </div>
-             )}
+               )}
           </div>
         )}
 
