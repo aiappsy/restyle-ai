@@ -14,6 +14,9 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const app = express();
+const PORT = process.env.PORT || 3001;
+
 // --- IMAGE PROXY ---
 app.get('/api/proxy-image', async (req, res) => {
   const imageUrl = req.query.url;
@@ -38,9 +41,6 @@ app.get('/api/proxy-image', async (req, res) => {
     res.status(500).send('Error proxying image');
   }
 });
-
-const app = express();
-const PORT = process.env.PORT || 3001;
 
 // Secret for JWT
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-restyle-key-123';
