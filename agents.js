@@ -76,12 +76,11 @@ ${additionalInstructions ? `The user also requested: "${additionalInstructions}"
 Focus on naming exactly 4-6 key pieces of furniture or decor that we must buy to achieve this look. Be very specific about colors, materials, and vibe (e.g. "a rust-orange velvet accent chair with brass legs").
 Return ONLY the text of the brief.`;
 
-  const response = await getAi().models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: [{ parts: [{ text: prompt }] }],
+  const result = await getAi().models.generateContent({
+    model: 'gemini-1.5-flash',
+    contents: { parts: [{ text: prompt }] }
   });
-
-  return response.text;
+  return result.text;
 }
 
 async function runShopperAgent({ base64Image, mimeType, style, roomType, budget, customShops, location, designBrief }, onProgress) {
@@ -103,23 +102,18 @@ Return the result EXACTLY as a raw JSON array of objects with keys: name, price,
 
   onProgress({ type: 'status', message: 'Shopper is using Google Search to source items...' });
 
-  const response = await getAi().models.generateContent({
+  const result = await getAi().models.generateContent({
     model: 'gemini-2.5-pro',
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
-          { text: prompt }
-        ]
-      }
-    ],
-    config: {
-      tools: [{ googleSearch: {} }]
-    }
+    contents: {
+      parts: [
+        { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
+        { text: prompt }
+      ]
+    },
+    tools: [{ googleSearch: {} }]
   });
 
-  let text = response.text || "[]";
+  let text = result.text || "[]";
   const match = text.match(/\[[\s\S]*\]/);
   if (match) text = match[0];
   let products = JSON.parse(text);
@@ -165,17 +159,14 @@ ${products.map((p, i) => `ID ${i}: ${p.name} (${p.category})`).join('\n')}
 
 Return the spatial map as a JSON array.`;
 
-  const response = await getAi().models.generateContent({
-    model: 'gemini-2.5-pro',
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
-          { text: prompt }
-        ]
-      }
-    ],
+  const result = await getAi().models.generateContent({
+    model: "gemini-2.5-pro",
+    contents: {
+      parts: [
+        { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
+        { text: prompt }
+      ]
+    },
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -193,7 +184,7 @@ Return the spatial map as a JSON array.`;
     }
   });
 
-  return JSON.parse(response.text || "[]");
+  return JSON.parse(result.text || "[]");
 }
 
 async function runRenderAgent({ base64Image, mimeType, style, roomType, products, coordinates, designBrief }) {
@@ -236,20 +227,22 @@ RULES:
   let elitePrompt = prompt;
   if (rawProductParts.length > 0) {
     try {
-      const visionSynth = await getAi().models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: [
-          ...rawProductParts,
-          { text: `Analyze these real product images. Write a precise physical description of how to render these specific items mathematically inside a ${roomType}. Output ONLY the directives.` }
-        ]
+      const synthResult = await getAi().models.generateContent({
+        model: "gemini-1.5-flash",
+        contents: {
+          parts: [
+            ...rawProductParts,
+            { text: `Analyze these real product images. Write a precise physical description of how to render these specific items mathematically inside a ${roomType}. Output ONLY the directives.` }
+          ]
+        }
       });
-      elitePrompt += `\n\nPHYSICAL DIRECTIVES (Follow precisely):\n${visionSynth.text}`;
+      elitePrompt += `\n\nPHYSICAL DIRECTIVES (Follow precisely):\n${synthResult.text}`;
     } catch (err) {
       console.warn("Vision Synth skipped");
     }
   }
 
-  const response = await getAi().models.generateContent({
+  const result = await getAi().models.generateContent({
     model: 'gemini-2.5-flash-image',
     contents: {
       parts: [
@@ -259,7 +252,7 @@ RULES:
     },
   });
 
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
+  for (const part of result.candidates?.[0]?.content?.parts || []) {
     if (part.inlineData) {
       return { 
         result: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
@@ -270,6 +263,71 @@ RULES:
   }
   
   throw new Error("Failed to generate final image.");
+}
+
+/**
+ * Generates an initial AI mockup design based on style and room type.
+ */
+export async function runMockupAgent(input) {
+  const { base64Image, mimeType, style, roomType, additionalInstructions } = input;
+
+  const prompt = `You are a world-class interior designer. Generate a stunning, high-fidelity mockup design for a ${style} ${roomType}. 
+  ${additionalInstructions ? `Incorporate these requests: "${additionalInstructions}"` : ''}
+  
+  RULES:
+  1. Keep the room's core architecture exactly the same.
+  2. Create a fully furnished, beautiful design inspiration.
+  3. Render a photo-realistic, completely believable image.`;
+
+  const result = await getAi().models.generateContent({
+    model: "gemini-2.5-flash-image",
+    contents: {
+      parts: [
+        { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
+        { text: prompt },
+      ],
+    },
+  });
+
+  for (const part of result.candidates?.[0]?.content?.parts || []) {
+    if (part.inlineData) {
+      return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+    }
+  }
+  
+  throw new Error("Failed to generate mockup image.");
+}
+
+/**
+ * Identifies furniture category and style from click coordinates.
+ */
+export async function runIdentifyFurnitureAgent(input) {
+  const { base64Image, mimeType, x, y } = input;
+
+  const prompt = `You are an expert furniture identifier. I am clicking on a room image at coordinates X:${x}%, Y:${y}%.
+  Identify the specific furniture item or decor element at this location.
+  
+  Return ONLY a JSON object with:
+  - category: (e.g., "Sofa", "Accent Chair", "Coffee Table", "Wall Art", "Plant")
+  - visualDescription: (A 2-sentence precise physical description of the EXACT item seen in the image at those coordinates - color, material, shape)
+  - searchKeywords: (3-5 keywords for finding real products like this)
+  
+  If nothing specific is there, return category: "Unknown".`;
+
+  const result = await getAi().models.generateContent({
+    model: "gemini-1.5-flash",
+    contents: {
+      parts: [
+        { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
+        { text: prompt },
+      ],
+    },
+  });
+
+  let text = result.text || "{}";
+  const match = text.match(/\{[\s\S]*\}/);
+  if (match) text = match[0];
+  return JSON.parse(text);
 }
 
 // ============================================================================
@@ -304,15 +362,13 @@ CRITICAL RULES:
 2. Provide a 2-sentence "visualDescription" for each product so our Render Team knows exactly how it physically looks.
 Return the result EXACTLY as a raw JSON array of objects with keys: name, price, vendor, productUrl, imageUrl, category, reason, visualDescription. No markdown formatting.`;
 
-    const response = await getAi().models.generateContent({
-      model: 'gemini-2.5-pro',
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: {
-        tools: [{ googleSearch: {} }]
-      }
+    const result = await getAi().models.generateContent({
+      model: "gemini-2.5-pro",
+      contents: { parts: [{ text: prompt }] },
+      tools: [{ googleSearch: {} }]
     });
 
-    let text = response.text || "[]";
+    let text = result.text || "[]";
     const match = text.match(/\[[\s\S]*\]/);
     if (match) text = match[0];
     let products = JSON.parse(text);
@@ -389,21 +445,23 @@ RULES:
   let elitePrompt = prompt;
   if (rawProductParts.length > 0) {
     try {
-      const visionSynth = await getAi().models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: [
-          ...rawProductParts,
-          { text: `Analyze these real product images. Write a precise physical description of how to physically model and render these specific items mathematically inside a ${roomType}. Output ONLY the physical shape directives.` }
-        ]
+      const synthResult = await getAi().models.generateContent({
+        model: "gemini-1.5-flash",
+        contents: {
+          parts: [
+            ...rawProductParts,
+            { text: `Analyze these real product images. Write a precise physical description of how to physically model and render these specific items mathematically inside a ${roomType}. Output ONLY the physical shape directives.` }
+          ]
+        }
       });
-      elitePrompt += `\n\nPHYSICAL DIRECTIVES (Follow precisely):\n${visionSynth.text}`;
+      elitePrompt += `\n\nPHYSICAL DIRECTIVES (Follow precisely):\n${synthResult.text}`;
     } catch (err) {
       console.warn("Vision Synth skipped");
     }
   }
 
-  const response = await getAi().models.generateContent({
-    model: 'gemini-2.5-flash-image',
+  const result = await getAi().models.generateContent({
+    model: "gemini-2.5-flash-image",
     contents: {
       parts: [
         { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
@@ -412,7 +470,7 @@ RULES:
     },
   });
 
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
+  for (const part of result.candidates?.[0]?.content?.parts || []) {
     if (part.inlineData) {
       return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
     }
