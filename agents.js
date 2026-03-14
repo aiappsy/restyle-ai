@@ -118,30 +118,59 @@ Return the result EXACTLY as a raw JSON array of objects with keys: name, price,
   if (match) text = match[0];
   let products = JSON.parse(text);
 
-  // --- SELF CORRECTION LOOP ---
-  onProgress({ type: 'status', message: 'Shopper QA is verifying image accessibility...' });
+  // --- VISION QA STEP ---
   const verifiedProducts = [];
-  
-  // Test concurrently to save time
-  await Promise.all(products.map(async (p) => {
+  onProgress({ type: 'status', message: `Vision QA is verifying ${products.length} products...` });
+
+  const verifyProduct = async (p) => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout per image
-      const res = await fetch(p.imageUrl, { method: 'HEAD', signal: controller.signal });
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(p.imageUrl, { 
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      });
       clearTimeout(timeoutId);
-      
-      if (res.ok) {
-        verifiedProducts.push(p);
+
+      if (!res.ok) {
+        console.log(`[Shopper QA Drop] Image failed with HTTP ${res.status} for:`, p.imageUrl);
+        return;
+      }
+
+      const buffer = await res.arrayBuffer();
+      if (buffer.byteLength < 100) return;
+
+      const base64 = Buffer.from(buffer).toString('base64');
+      const mimeType = res.headers.get('content-type') || 'image/jpeg';
+
+      const qaResult = await getAi().models.generateContent({
+        model: 'gemini-1.5-flash',
+        contents: {
+          parts: [
+            { inlineData: { data: base64, mimeType: mimeType } },
+            { text: `Analyze this furniture image. The category should be ${p.category}. Is it correct? (e.g. if category is Sofa, it MUST be a sofa, not a chair). Respond YES or NO. Output ONLY YES or NO.` }
+          ]
+        }
+      });
+
+      const decision = (qaResult.text || '').trim().toUpperCase();
+      if (decision.includes('NO')) {
+        console.warn(`[Shopper QA Reject] ${p.name} rejected. Expected: ${p.category}, AI saw: ${decision}`);
       } else {
-        console.warn(`[QA] Rejected product ${p.name} due to invalid image URL or 403 status.`);
+        verifiedProducts.push(p);
       }
     } catch (e) {
-      console.warn(`[QA] Rejected product ${p.name} due to fetch timeout/error.`);
+      console.warn(`[Shopper QA Error] Verification failed for ${p.name}:`, e.message);
+      verifiedProducts.push(p);
     }
-  }));
+  };
+
+  await Promise.all(products.map(verifyProduct));
 
   if (verifiedProducts.length < products.length) {
-    onProgress({ type: 'status', message: `Shopper QA dropped ${products.length - verifiedProducts.length} items with inaccessible images.` });
+    onProgress({ type: 'status', message: `Vision QA dropped ${products.length - verifiedProducts.length} items.` });
   }
 
   return verifiedProducts;
@@ -357,9 +386,12 @@ ${shopInstruction}
 
 Search the web using googleSearch for 6 to 10 HIGHLY VARIANT, beautiful, real products that fit the category: "${category}".
 Ensure they fit perfectly within a ${style} aesthetic.
+
 CRITICAL RULES:
-1. The imageUrl MUST be a direct, publicly accessible image URL ending in .jpg or .png.
-2. Provide a 2-sentence "visualDescription" for each product so our Render Team knows exactly how it physically looks.
+1. ONLY return products that are actually ${category}s. (e.g. if the category is "Sofa", do NOT return chairs or armchairs, even if they are from the same collection).
+2. Prioritize reputable furniture brands (e.g., Article, Crate & Barrel, West Elm, IKEA, IKEA.com, Wayfair) where images are easily accessible.
+3. The imageUrl MUST be a direct, publicly accessible image URL ending in .jpg or .png.
+4. Provide a 2-sentence "visualDescription" for each product so our Render Team knows exactly how it physically looks.
 Return the result EXACTLY as a raw JSON array of objects with keys: name, price, vendor, productUrl, imageUrl, category, reason, visualDescription. No markdown formatting.`;
 
     const result = await getAi().models.generateContent({
@@ -373,29 +405,71 @@ Return the result EXACTLY as a raw JSON array of objects with keys: name, price,
     if (match) text = match[0];
     let products = JSON.parse(text);
     
-    // Quick QA Drop
+    // --- VISION QA STEP ---
     const verifiedProducts = [];
-    await Promise.all(products.map(async (p) => {
+    console.log(`[Vision QA] Verifying ${products.length} products for category: ${category}`);
+
+    const verifyImage = async (p) => {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch(p.imageUrl, { method: 'HEAD', signal: controller.signal });
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const imgRes = await fetch(p.imageUrl, { 
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          }
+        });
         clearTimeout(timeoutId);
-        if (res.ok) {
-          verifiedProducts.push(p);
-        } else {
-          console.log(`[QA Drop] Image HEAD failed with HTTP ${res.status} for:`, p.imageUrl);
-          // Sometimes HEAD fails but GET works. Let's just accept it if it's a URL to avoid massive drops.
-          // Wait, if we drop all of them, the UI breaks. Let's push it anyway as a fallback.
-          console.log(`[QA Fallback] Accepting the product anyway because strict HEAD filtering is brittle.`);
-          verifiedProducts.push(p);
+
+        if (!imgRes.ok) {
+          console.warn(`[Vision QA Skip] ${p.name} image inaccessible (HTTP ${imgRes.status}). Accepting by default.`);
+          verifiedProducts.push({ ...p, category });
+          return;
         }
-      } catch (e) {
-        console.log(`[QA Drop] Image fetch threw error for`, p.imageUrl, e.message);
-        // We will push it anyway in case it's just a Node fetch timeout that the browser would handle fine
-        verifiedProducts.push(p);
+
+        const buffer = await imgRes.arrayBuffer();
+        if (buffer.byteLength < 100) {
+          console.warn(`[Vision QA Skip] ${p.name} image too small (${buffer.byteLength} bytes).`);
+          return;
+        }
+        const base64 = Buffer.from(buffer).toString('base64');
+        const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
+
+        const result = await getAi().models.generateContent({
+          model: 'gemini-1.5-flash',
+          contents: {
+            parts: [
+              { inlineData: { data: base64, mimeType: mimeType } },
+              { text: `Analyze this furniture image. Is this a ${category}? 
+              
+              CRITICAL: 
+              - A SOFA must be a multi-person seat.
+              - A CHAIR or ARMCHAIR is for one person.
+              - If the item is a ${category}, respond exactly with 'YES'.
+              - If it is NOT a ${category} (e.g. you see a chair but I asked for a sofa), respond exactly with 'NO'.
+              - If it's a completely different object, respond 'NO'.
+              
+              Output ONLY 'YES' or 'NO'.` }
+            ]
+          }
+        });
+
+        if (decision.includes('NO')) {
+          console.warn(`[Vision QA Reject] ${p.name} is NOT a ${category}. AI saw: ${decision}`);
+        } else {
+          // If YES or if we're unsure/error, we keep it for now but prioritize YES
+          verifiedProducts.push({ ...p, category }); 
+        }
+      } catch (err) {
+        console.warn(`[Vision QA Error] Failed to verify ${p.name}:`, err.message);
+        // Fallback: Accept if verification fails due to technical reasons
+        verifiedProducts.push({ ...p, category }); 
       }
-    }));
+    };
+
+    // Run verification in parallel with a concurrency limit if needed, 
+    // but Promise.all is fine for 6-10 items.
+    await Promise.all(products.map(verifyImage));
 
     categorizedProducts[category] = verifiedProducts;
   }));
