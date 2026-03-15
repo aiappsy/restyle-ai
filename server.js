@@ -7,7 +7,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import db from './db.js';
-import { runAgentWorkflow, runSourcingAgentForLayout, runRenderAgentForLayout } from './agents.js';
+import { runAgentWorkflow, runSourcingAgentForLayout, runRenderAgentForLayout, runMockupAgent, runIdentifyFurnitureAgent } from './agents.js';
 
 dotenv.config();
 
@@ -611,6 +611,27 @@ app.post('/api/render-final-layout', authenticateToken, checkCredits, async (req
   } catch (error) {
     console.error("Layout Render Error:", error);
     res.status(500).json({ error: "Failed to render final layout" });
+  }
+});
+
+app.post('/api/generate-mockup', authenticateToken, checkCredits, async (req, res) => {
+  try {
+    const mockupImageBase64 = await runMockupAgent(req.body);
+    // Note: We might want to deduct credits for mockup gen too
+    res.json({ result: mockupImageBase64 });
+  } catch (error) {
+    console.error("Mockup Gen Error:", error);
+    res.status(500).json({ error: "Failed to generate mockup" });
+  }
+});
+
+app.post('/api/identify-furniture', authenticateToken, async (req, res) => {
+  try {
+    const identification = await runIdentifyFurnitureAgent(req.body);
+    res.json(identification);
+  } catch (error) {
+    console.error("Identification Error:", error);
+    res.status(500).json({ error: "Failed to identify furniture" });
   }
 });
 

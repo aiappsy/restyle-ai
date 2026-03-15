@@ -296,3 +296,33 @@ export async function renderFinalLayout(
   const data = await handleResponse(response);
   return data.result;
 }
+
+export async function generateMockup(
+  base64Image: string,
+  mimeType: string,
+  style: string,
+  roomType: string,
+  additionalInstructions?: string
+): Promise<string> {
+  const response = await fetch('/api/generate-mockup', {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ base64Image, mimeType, style, roomType, additionalInstructions })
+  });
+  const data = await handleResponse(response);
+  return data.result;
+}
+
+export async function identifyFurniture(
+  base64Image: string,
+  mimeType: string,
+  x: number,
+  y: number
+): Promise<{ category: string, visualDescription: string, searchKeywords: string }> {
+  const response = await fetch('/api/identify-furniture', {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ base64Image, mimeType, x, y })
+  });
+  return handleResponse(response);
+}

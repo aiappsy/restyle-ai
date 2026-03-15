@@ -4,7 +4,7 @@ import { Upload, Image as ImageIcon, Download, Printer, Wand2, RefreshCw, Chevro
 import CompareSlider from '../components/CompareSlider';
 import StyleSelector, { STYLES } from '../components/StyleSelector';
 import AdminModal from '../components/AdminModal';
-import { generateRoomDesign, generateShoppingList, ProductItem, PlacedItem, sourceProductsForLayout, renderFinalLayout, sendChatMessage, regenerateWithProducts, generateSpeech, saveDesign, locateProductsInImage } from '../services/ai';
+import { generateRoomDesign, generateShoppingList, ProductItem, PlacedItem, sourceProductsForLayout, renderFinalLayout, sendChatMessage, regenerateWithProducts, generateSpeech, saveDesign, locateProductsInImage, generateMockup, identifyFurniture } from '../services/ai';
 import { useAuth } from '../contexts/AuthContext';
 
 const ROOM_TYPES = ['Living Room', 'Bedroom', 'Dining Room', 'Home Office', 'Bathroom', 'Kitchen'];
@@ -75,6 +75,13 @@ export default function Home() {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
+
+  // Visual Swap Flow State
+  const [mockupImage, setMockupImage] = useState<string | null>(null);
+  const [isGeneratingMockup, setIsGeneratingMockup] = useState(false);
+  const [isIdentifying, setIsIdentifying] = useState(false);
+  const [identifiedItem, setIdentifiedItem] = useState<{ id: string, category: string, visualDescription: string, x: number, y: number } | null>(null);
+  const [isRegeneratingSub, setIsRegeneratingSub] = useState(false);
 
   const { user, logout } = useAuth();
   
@@ -320,6 +327,99 @@ export default function Home() {
     setShoppingList([]);
   };
 
+  const handleGenerateMockup = async () => {
+    if (!originalImage) return;
+    
+    setStep(3);
+    setIsGeneratingMockup(true);
+    setLoadingState('Generating your dream design mockup...');
+    setMockupImage(null);
+    setGeneratedImage(null);
+    setPlacedItems([]);
+
+    try {
+      const mockup = await generateMockup(
+        originalImage,
+        originalMimeType || 'image/jpeg',
+        selectedStyle,
+        roomType
+      );
+      setMockupImage(mockup);
+      setGeneratedImage(mockup); // Sync for CompareSlider
+    } catch (error) {
+      console.error("Mockup generation failed:", error);
+      alert("Failed to generate mockup. Please try again.");
+    } finally {
+      setIsGeneratingMockup(false);
+    }
+  };
+
+  const handleMockupClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isIdentifying || isSourcingProducts || !mockupImage) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+
+    setIsIdentifying(true);
+    setIdentifiedItem(null);
+
+    try {
+      const result = await identifyFurniture(
+        mockupImage,
+        'image/png', // Mockups are usually returned as PNG from our agent
+        x,
+        y
+      );
+
+      if (result.category === 'Unknown') {
+        alert("We couldn't identify a specific furniture item here. Please try clicking closer to the center of an object.");
+        return;
+      }
+
+      const id = Math.random().toString(36).substr(2, 9);
+      setIdentifiedItem({ id, ...result, x, y });
+      
+      // Auto-trigger sourcing for this identified item
+      handleSourceForItem(id, result.category, result.searchKeywords);
+
+    } catch (error) {
+      console.error("Identification failed:", error);
+      alert("Failed to identify item. Please try again.");
+    } finally {
+      setIsIdentifying(false);
+    }
+  };
+
+  const handleSourceForItem = async (id: string, category: string, keywords: string) => {
+    setLoadingState(`Sourcing real ${category} pieces...`);
+    setIsSourcingProducts(true);
+    setStep(4);
+
+    try {
+      const customShopsList = searchMode === 'manual' && selectedShops.length > 0 ? selectedShops : undefined;
+      
+      // Use the sourcing agent - we'll adapt it to take keywords or just the category
+      const categorizedProducts = await sourceProductsForLayout(
+        mockupImage!,
+        'image/png',
+        selectedStyle,
+        roomType,
+        budget,
+        [{ id, category, x: 0, y: 0 }], // Temporary PlacedItem wrapper
+        customShopsList,
+        location
+      );
+
+      setSourcedOptions(categorizedProducts);
+    } catch (error) {
+       console.error("Sourcing failed:", error);
+       setStep(3);
+    } finally {
+       setIsSourcingProducts(false);
+    }
+  };
+
   const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!activeCategory || isSourcingProducts) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -422,6 +522,46 @@ export default function Home() {
       console.error("Render failed:", error);
       alert("Failed to render the final image. Please try again.");
       setStep(4); // Back to selection
+    }
+  };
+
+  const handleSubstituteProduct = async (product: ProductItem) => {
+    if (!mockupImage || !identifiedItem) return;
+
+    setLoadingState(`Substituting with ${product.name}...`);
+    setIsRegeneratingSub(true);
+    setStep(5); // Show rendering state
+
+    try {
+      const mimeType = 'image/png';
+      
+      // Update the identified item with the selected product and its absolute coordinates
+      const selectedProductWithCoords = {
+        ...product,
+        coordinates: { x: Math.round(identifiedItem.x), y: Math.round(identifiedItem.y) }
+      };
+
+      const resultImage = await renderFinalLayout(
+        mockupImage,
+        mimeType,
+        selectedStyle,
+        roomType,
+        [selectedProductWithCoords]
+      );
+
+      setGeneratedImage(resultImage);
+      setMockupImage(resultImage); // Set as current base for next iteration
+      setPlacedItems(prev => [...prev, { ...identifiedItem, category: product.category }]);
+      setShoppingList(prev => [...prev, product]);
+      setIdentifiedItem(null);
+      setStep(3); // Return to mockup for more swaps
+      
+    } catch (error) {
+      console.error("Substitution failed:", error);
+      alert("Failed to swap the product. Please try again.");
+      setStep(4);
+    } finally {
+      setIsRegeneratingSub(false);
     }
   };
 
@@ -832,10 +972,11 @@ export default function Home() {
 
               <div className="mt-12 pt-8 border-t border-gray-100 flex justify-end">
                 <button
-                  onClick={handleContinueToLayout}
-                  className="px-8 py-4 bg-gray-900 text-white font-medium rounded-xl hover:bg-gray-800 transition-colors flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5 transform"
+                  onClick={handleGenerateMockup}
+                  className="px-8 py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition-all flex items-center gap-2 shadow-xl hover:shadow-indigo-200 hover:-translate-y-1 transform active:scale-95"
                 >
-                  Continue to Layout Planner
+                  <Wand2 className="w-6 h-6" />
+                  Generate AI Design Mockup
                   <ChevronRight className="w-5 h-5" />
                 </button>
               </div>
@@ -843,119 +984,101 @@ export default function Home() {
           </div>
         )}
 
-        {/* STEP 3: INTERACTIVE LAYOUT PLANNER */}
-        {step === 3 && originalImage && (
+        {/* STEP 3: INTERACTIVE MOCKUP & IDENTIFICATION */}
+        {step === 3 && (
           <div className="animate-in fade-in duration-500 max-w-6xl mx-auto">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold">Plan Your Layout</h2>
-              <button 
-                onClick={() => setStep(2)}
-                className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1"
-              >
-                <ChevronLeft className="w-4 h-4" /> Back to Customization
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-              {/* Toolbar */}
-              <div className="lg:col-span-3 space-y-4">
-                <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
-                  <h3 className="font-semibold text-gray-900 mb-4">1. Select an item</h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    {['Sofa', 'Accent Chair', 'Coffee Table', 'Rug', 'Table Lamp', 'Floor Lamp', 'Pendant Light', 'Wall Art', 'Plant', 'TV Stand', 'Bed', 'Nightstand', 'Dining Table', 'Dining Chair'].map(cat => (
-                      <button
-                        key={cat}
-                        onClick={() => setActiveCategory(activeCategory === cat ? null : cat)}
-                        className={`text-xs p-2 rounded-lg border font-medium transition-all text-center ${
-                          activeCategory === cat
-                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
-                            : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-gray-300 hover:bg-white'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
+            {isGeneratingMockup ? (
+              <div className="text-center py-20 bg-white/50 backdrop-blur-sm rounded-[3rem] border border-white/20 shadow-xl">
+                 <div className="relative w-40 h-40 mx-auto mb-10">
+                   <div className="absolute inset-0 border-8 border-indigo-50/50 rounded-full"></div>
+                   <div className="absolute inset-0 border-8 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
+                   <div className="absolute inset-0 flex items-center justify-center">
+                     <Wand2 className="w-16 h-16 text-indigo-600 animate-pulse" />
+                   </div>
+                 </div>
+                 <h2 className="text-4xl font-black text-slate-900 mb-4 animate-fade-in">{loadingState}</h2>
+                 <p className="text-slate-500 text-xl max-w-lg mx-auto leading-relaxed">
+                   Our AI Lead Designer is crafting a bespoke {selectedStyle} {roomType} just for you.
+                 </p>
+              </div>
+            ) : (
+              <div className="space-y-8">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-3xl font-black text-slate-900">Your Design Inspiration</h2>
+                    <p className="text-slate-500 font-medium">Click on any piece of furniture to replace it with a real product.</p>
                   </div>
-                  
-                  <div className="mt-6 p-4 bg-indigo-50 rounded-xl border border-indigo-100">
-                    <h3 className="font-semibold text-indigo-900 text-sm mb-2">2. Click image to place</h3>
-                    <p className="text-xs text-indigo-700">Select an item above, then click anywhere on your room photo to mark where you want it to go.</p>
-                  </div>
-
-                  <div className="mt-6">
-                     <h3 className="font-semibold text-gray-900 text-sm mb-3">Placed Items ({placedItems.length})</h3>
-                     {placedItems.length === 0 ? (
-                       <p className="text-xs text-gray-500 italic">No items placed yet.</p>
-                     ) : (
-                       <ul className="space-y-2 max-h-48 overflow-y-auto">
-                         {placedItems.map(item => (
-                           <li key={item.id} className="flex items-center justify-between text-xs p-2 bg-gray-50 rounded border border-gray-100">
-                             <div className="flex items-center gap-2">
-                               <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
-                               <span className="font-medium text-gray-700">{item.category}</span>
-                             </div>
-                             <button
-                               onClick={() => setPlacedItems(prev => prev.filter(p => p.id !== item.id))}
-                               className="text-gray-400 hover:text-red-500"
-                             >
-                               <X className="w-3 h-3" />
-                             </button>
-                           </li>
-                         ))}
-                       </ul>
-                     )}
-                  </div>
-
-                  <button
-                    onClick={handleSourceProducts}
-                    disabled={placedItems.length === 0}
-                    className="w-full mt-6 px-4 py-3 bg-gray-900 text-white font-medium rounded-xl hover:bg-gray-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-2 shadow-md"
+                  <button 
+                    onClick={() => setStep(2)}
+                    className="px-4 py-2 bg-white text-slate-600 font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition-all flex items-center gap-2"
                   >
-                    Find Real Products
-                    <ChevronRight className="w-4 h-4" />
+                    <ChevronLeft className="w-5 h-5" /> Back
                   </button>
                 </div>
-              </div>
 
-              {/* Canvas */}
-              <div className="lg:col-span-9">
-                <div 
-                  className={`relative rounded-3xl overflow-hidden bg-gray-100 border-2 shadow-sm transition-all ${
-                    activeCategory ? 'border-indigo-400 cursor-crosshair' : 'border-transparent'
-                  }`}
-                  onClick={handleCanvasClick}
-                >
-                  <img src={originalImage} alt="Room Layout" className="w-full h-auto object-contain block pointer-events-none select-none" />
-                  
-                  {/* Markers */}
-                  {placedItems.map((item, idx) => (
-                    <div 
-                      key={item.id}
-                      className="absolute w-6 h-6 -ml-3 -mt-3 bg-indigo-600 border-2 border-white text-white rounded-full shadow-lg flex items-center justify-center text-[10px] font-bold z-10 animate-in zoom-in pointer-events-none"
-                      style={{ left: `${item.x}%`, top: `${item.y}%` }}
-                    >
-                      {idx + 1}
-                    </div>
-                  ))}
+                <div className="relative glass p-4 rounded-[3rem] shadow-2xl overflow-hidden group">
+                  <div 
+                    className={`relative rounded-[2.5rem] overflow-hidden bg-slate-100 transition-all border-4 border-transparent hover:border-indigo-400 group-hover:shadow-2xl cursor-pointer`}
+                    onClick={handleMockupClick}
+                  >
+                    <img src={mockupImage!} alt="Mockup" className="w-full h-auto object-contain block select-none transition-transform duration-700 group-hover:scale-[1.01]" />
+                    
+                    {/* Identification Overlay */}
+                    {isIdentifying && (
+                      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-300">
+                        <div className="bg-white p-8 rounded-3xl shadow-2xl text-center space-y-4 max-w-xs scale-in">
+                          <div className="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto animate-bounce">
+                            <MapPin className="w-8 h-8" />
+                          </div>
+                          <h3 className="text-xl font-bold text-slate-900">Identifying Item...</h3>
+                          <p className="text-slate-500 text-sm">Asking our AI vision agent what you clicked on.</p>
+                        </div>
+                      </div>
+                    )}
 
-                  {activeCategory && (
-                     <div className="absolute top-4 left-0 right-0 flex justify-center pointer-events-none">
-                       <span className="bg-gray-900/80 text-white px-4 py-2 rounded-full text-sm font-medium backdrop-blur-sm shadow-xl">
-                         Click anywhere to place the {activeCategory}
+                    {/* Placed Indicators */}
+                    {placedItems.map((item, idx) => (
+                      <div 
+                        key={item.id}
+                        className="absolute w-10 h-10 -ml-5 -mt-5 bg-green-500 border-4 border-white text-white rounded-full shadow-2xl flex items-center justify-center text-xs font-black z-10 animate-in zoom-in"
+                        style={{ left: `${item.x}%`, top: `${item.y}%` }}
+                      >
+                        <CheckCircle2 className="w-6 h-6" />
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Tooltip hint */}
+                  {!isIdentifying && (
+                    <div className="absolute top-10 left-1/2 -translate-x-1/2 pointer-events-none transition-all group-hover:translate-y-2 opacity-0 group-hover:opacity-100">
+                       <span className="bg-slate-900/90 text-white px-8 py-3 rounded-full text-base font-bold backdrop-blur-md shadow-2xl border border-white/20">
+                          Click any item to swap it!
                        </span>
-                     </div>
+                    </div>
                   )}
                 </div>
+
+                {placedItems.length > 0 && (
+                   <div className="flex justify-center pt-8">
+                      <button 
+                        onClick={() => setStep(6)} // Final design view if satisfied
+                        className="px-12 py-5 bg-slate-900 text-white font-black rounded-2xl hover:bg-slate-800 transition-all shadow-2xl hover:-translate-y-1 transform flex items-center gap-4 text-xl"
+                      >
+                        <Wand2 className="w-8 h-8 text-indigo-400" />
+                        I'm Done - Finalize My Room
+                      </button>
+                   </div>
+                )}
               </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* STEP 4: PRODUCT SELECTION & SOURCING */}
+        {/* STEP 4: IDENTIFIED ITEM SEARCH RESULTS */}
         {step === 4 && (
-          <div className="animate-in fade-in duration-500 max-w-6xl mx-auto">
-             {isSourcingProducts ? (
-               <div className="text-center py-20">
+          <div className="animate-in fade-in duration-500 max-w-6xl mx-auto space-y-10">
+            {isSourcingProducts ? (
+              <div className="text-center py-20 glass rounded-[3rem]">
                  <div className="relative w-32 h-32 mx-auto mb-8">
                    <div className="absolute inset-0 border-4 border-indigo-100 rounded-full"></div>
                    <div className="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
@@ -963,151 +1086,123 @@ export default function Home() {
                      <ShoppingBag className="w-10 h-10 text-indigo-600 animate-pulse" />
                    </div>
                  </div>
-                 <h2 className="text-3xl font-bold tracking-tight mb-4">{loadingState}</h2>
-                 <p className="text-gray-500 text-lg max-w-md mx-auto">
-                   Our AI is searching the web to find the perfect real-world products matching your layout and {selectedStyle} style.
+                 <h2 className="text-3xl font-black mb-4">{loadingState}</h2>
+                 <p className="text-slate-500 text-lg max-w-md mx-auto">
+                   Our agents are scouring the web for high-end matches for your click.
                  </p>
-               </div>
-             ) : (
-               <div>
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                    <div>
-                      <h2 className="text-2xl font-bold">Select Your Exact Products</h2>
-                      <p className="text-gray-500 text-sm">Choose one specific product for each item you placed.</p>
+              </div>
+            ) : identifiedItem && (
+               <div className="space-y-12">
+                  <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+                    <div className="space-y-4">
+                      <div className="inline-flex items-center gap-3 bg-indigo-600 text-white px-4 py-2 rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg">
+                        <MapPin className="w-5 h-5" /> Item Identified
+                      </div>
+                      <h2 className="text-5xl font-black text-slate-900 tracking-tight">Pick Your Real {identifiedItem.category}</h2>
+                      <p className="text-slate-500 text-xl font-medium max-w-2xl">
+                        {identifiedItem.visualDescription}
+                      </p>
                     </div>
                     <button
-                      onClick={handleRenderFinal}
-                      className="px-6 py-3 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700 transition-colors shadow-md flex items-center gap-2"
+                      onClick={() => setStep(3)}
+                      className="px-6 py-4 bg-white text-slate-900 font-bold rounded-2xl border-2 border-slate-100 hover:border-slate-300 transition-all flex items-center gap-2 shadow-sm"
                     >
-                      <Wand2 className="w-5 h-5" />
-                      Render Final Design
+                      <ChevronLeft className="w-5 h-5" /> Change Selection
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    {/* Left: Map Reference */}
-                    <div className="lg:col-span-5 relative hidden lg:block">
-                       <div className="sticky top-24 bg-white p-2 rounded-2xl border border-gray-100 shadow-sm">
-                         <div className="relative rounded-xl overflow-hidden">
-                           <img src={originalImage!} alt="Map" className="w-full h-auto object-cover opacity-50" />
-                           {placedItems.map((item, idx) => {
-                             const isSelected = selectedProductsMap[item.id] !== undefined;
-                             return (
-                               <div 
-                                 key={item.id}
-                                 className={`absolute -ml-4 -mt-4 w-10 h-10 rounded-full border-2 shadow-xl flex items-center justify-center text-xs font-bold transition-all duration-500 ${
-                                   isSelected ? 'bg-indigo-600 border-white text-white scale-110' : 'glass border-gray-300 text-gray-700'
-                                 }`}
-                                 style={{ left: `${item.x}%`, top: `${item.y}%` }}
-                               >
-                                 {isSelected && selectedProductsMap[item.id].imageUrl ? (
-                                   <div className="relative w-full h-full rounded-full overflow-hidden border border-white/50">
-                                      <img src={getProxyUrl(selectedProductsMap[item.id].imageUrl)} className="w-full h-full object-cover" alt="" />
-                                      <div className="absolute inset-0 bg-indigo-600/20"></div>
-                                   </div>
-                                 ) : (
-                                   <div className="animate-pulse">{idx + 1}</div>
-                                 )}
-                               </div>
-                             );
-                           })}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-10">
+                    {(sourcedOptions[identifiedItem.category] || []).map((prod, idx) => (
+                      <div 
+                        key={idx}
+                        onClick={() => handleSubstituteProduct(prod)}
+                        className="group relative glass p-6 rounded-[2.5rem] cursor-pointer transition-all duration-500 premium-card border-white/50 bg-white/40 hover:bg-white/90"
+                      >
+                         <div className="relative w-full aspect-square rounded-[2rem] overflow-hidden mb-6 shadow-inner ring-1 ring-slate-100 bg-white">
+                            <img 
+                              src={getProxyUrl(prod.imageUrl)} 
+                              alt={prod.name} 
+                              className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1581404917879-53e19259fdda?q=80&w=300&auto=format&fit=crop';
+                              }}
+                            />
+                            <div className="absolute inset-0 bg-slate-900/0 group-hover:bg-slate-900/5 transition-all duration-300"></div>
                          </div>
-                       </div>
-                    </div>
+                         
+                         <div className="space-y-3">
+                           <h4 className="font-black text-slate-900 text-lg leading-tight line-clamp-2 min-h-[3.5rem] tracking-tight">{prod.name}</h4>
+                           <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                             <div className="flex flex-col">
+                               <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-0.5">Brand</span>
+                               <span className="text-sm font-bold text-slate-600 truncate max-w-[120px]">{prod.vendor}</span>
+                             </div>
+                             <div className="flex flex-col items-end">
+                               <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-0.5">Price</span>
+                               <span className="text-xl font-black text-indigo-600">{prod.price}</span>
+                             </div>
+                           </div>
+                         </div>
 
-                     {/* Right: Product Lists */}
-                     <div className="lg:col-span-7 space-y-12 pb-32">
-                        {placedItems.map((item, idx) => {
-                          const options = sourcedOptions[item.category] || [];
-                          const selectedProd = selectedProductsMap[item.id];
-                          
-                          return (
-                            <div key={item.id} className="glass p-8 rounded-[2.5rem] relative animate-fade-in group" style={{ animationDelay: `${idx * 150}ms` }}>
-                              <div className="absolute -top-6 left-8 flex items-center gap-4">
-                                 <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-bold text-xl shadow-lg ring-8 ring-white/50 backdrop-blur-md transform transition-transform group-hover:rotate-12">
-                                   {idx + 1}
-                                 </div>
-                                 <div className="bg-white/90 backdrop-blur-md px-4 py-2 rounded-xl shadow-sm border border-white/20">
-                                   <h3 className="font-bold text-slate-900 text-lg uppercase tracking-wider">Pick a {item.category}</h3>
-                                 </div>
-                              </div>
-                              
-                              {options.length === 0 ? (
-                                <div className="p-12 text-center text-slate-400 font-medium italic mt-4 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-                                  Our agents are still hunting for the perfect {item.category}...
-                                </div>
-                              ) : (
-                                <div className="flex gap-6 overflow-x-auto py-6 px-1 snap-x custom-scrollbar mt-4 mask-fade-edges">
-                                  {options.map((prod, optIdx) => {
-                                    const isActive = selectedProd?.name === prod.name;
-                                    return (
-                                      <div 
-                                        key={optIdx}
-                                        onClick={() => setSelectedProductsMap(prev => ({ ...prev, [item.id]: prod }))}
-                                        className={`snap-center shrink-0 w-64 rounded-3xl border-2 p-4 cursor-pointer transition-all duration-300 premium-card ${
-                                          isActive 
-                                            ? 'border-indigo-500 bg-indigo-50/40 shadow-xl shadow-indigo-100 ring-4 ring-indigo-500/10 scale-[1.02]' 
-                                            : 'border-white/50 bg-white/40 hover:bg-white/60'
-                                        }`}
-                                      >
-                                         <div className="w-full aspect-square bg-white rounded-2xl mb-4 overflow-hidden shadow-inner group/img relative">
-                                            <img 
-                                              src={getProxyUrl(prod.imageUrl)} 
-                                              alt={prod.name} 
-                                              className="w-full h-full object-cover transition-transform duration-700 group-hover/img:scale-110" 
-                                              onError={(e) => {
-                                                (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?q=80&w=300&auto=format&fit=crop';
-                                              }}
-                                            />
-                                            {isActive && (
-                                              <div className="absolute top-2 right-2 bg-indigo-600 text-white p-1.5 rounded-full shadow-lg">
-                                                <CheckCircle2 className="w-4 h-4" />
-                                              </div>
-                                            )}
-                                         </div>
-                                         <div className="px-1">
-                                           <h4 className="font-bold text-slate-800 text-base line-clamp-2 leading-tight mb-2 min-h-[2.5rem]">{prod.name}</h4>
-                                           <div className="flex items-center justify-between mt-auto pt-2 border-t border-slate-100">
-                                             <span className="text-sm font-medium text-slate-500 truncate max-w-[60%]">{prod.vendor}</span>
-                                             <span className="text-base font-black text-indigo-600">{prod.price}</span>
-                                           </div>
-                                         </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                     </div>
-
-                    </div>
+                         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[80%] opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0">
+                            <button className="w-full py-3 bg-indigo-600 text-white font-black rounded-xl shadow-xl shadow-indigo-200">
+                               Select & Swap
+                            </button>
+                         </div>
+                      </div>
+                    ))}
+                    
+                    {(!sourcedOptions[identifiedItem.category] || sourcedOptions[identifiedItem.category].length === 0) && (
+                      <div className="col-span-full py-20 text-center glass rounded-[3rem] border border-dashed border-slate-300">
+                         <ShoppingBag className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+                         <p className="text-slate-500 font-bold text-xl">We couldn't find exact matches. Try clicking again for a better angle!</p>
+                      </div>
+                    )}
                   </div>
-               )}
+               </div>
+            )}
           </div>
         )}
 
-        {/* STEP 5: RESULTS */}
-        {step === 5 && generatedImage && (
+        {/* STEP 5: RENDERING / SUBSTITUTION PROGRESS */}
+        {step === 5 && (
+          <div className="animate-in fade-in duration-500 max-w-4xl mx-auto py-20">
+             <div className="text-center space-y-12">
+               <div className="relative w-48 h-48 mx-auto">
+                 <div className="absolute inset-0 bg-indigo-600/10 rounded-full animate-pulse"></div>
+                 <div className="absolute inset-4 border-4 border-white/50 border-t-indigo-600 rounded-full animate-spin"></div>
+                 <div className="absolute inset-0 flex items-center justify-center">
+                    <RefreshCw className="w-16 h-16 text-indigo-600 animate-spin-slow" />
+                 </div>
+               </div>
+               
+               <div className="space-y-4">
+                 <h2 className="text-5xl font-black text-slate-900 tracking-tight">{loadingState}</h2>
+                 <p className="text-slate-500 text-2xl font-medium max-w-xl mx-auto leading-relaxed">
+                   Our Render Studio is hyper-realistically blending your choice into the scene.
+                 </p>
+               </div>
+
+               {generatedImage && (
+                 <div className="max-w-md mx-auto aspect-video rounded-3xl overflow-hidden shadow-2xl animate-pulse ring-4 ring-indigo-600/20">
+                    <img src={generatedImage} className="w-full h-full object-cover" alt="Progress" />
+                 </div>
+               )}
+             </div>
+          </div>
+        )}
+
+        {/* STEP 6: FINAL RESULTS & SHOPPING LIST */}
+        {step === 6 && generatedImage && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold">Your New {roomType}</h2>
-              <div className="flex items-center gap-3">
                 <button 
-                  onClick={handleContinueToLayout}
-                  className="px-4 py-2 bg-indigo-50 text-indigo-600 font-medium rounded-lg hover:bg-indigo-100 transition-colors flex items-center gap-2"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  <span className="hidden sm:inline">Retry Design</span>
-                </button>
-                <button 
-                  onClick={() => setStep(2)}
+                  onClick={() => setStep(1)}
                   className="px-4 py-2 bg-white border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
                 >
-                  Try Another Style
+                  Start New Project
                 </button>
-              </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -1285,12 +1380,11 @@ export default function Home() {
                                   }`}
                                 >
                                   {item.imageUrl && (
-                                    <div className="w-24 h-24 shrink-0 rounded-xl overflow-hidden bg-gray-100 border border-gray-200">
+                                    <div className="w-24 h-24 shrink-0 rounded-xl overflow-hidden bg-white border border-gray-100 shadow-inner">
                                       <img 
-                                        src={item.imageUrl} 
+                                        src={getProxyUrl(item.imageUrl)} 
                                         alt={item.name} 
                                         className="w-full h-full object-cover" 
-                                        referrerPolicy="no-referrer" 
                                         onError={(e) => {
                                           const parent = e.currentTarget.parentElement;
                                           if (parent) parent.style.display = 'none';
