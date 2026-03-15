@@ -454,12 +454,15 @@ Return the result EXACTLY as a raw JSON array of objects with keys: name, price,
           }
         });
 
+        const decision = (result.text || '').trim().toUpperCase();
+        console.log(`[Vision QA] "${p.name}" -> ${decision}`);
+
         if (decision.includes('NO')) {
-          console.warn(`[Vision QA Reject] ${p.name} is NOT a ${category}. AI saw: ${decision}`);
+          console.warn(`[Vision QA REJECT] "${p.name}" is NOT a ${category}. Dropping it.`);
         } else {
-          // If YES or if we're unsure/error, we keep it for now but prioritize YES
           verifiedProducts.push({ ...p, category }); 
         }
+
       } catch (err) {
         console.warn(`[Vision QA Error] Failed to verify ${p.name}:`, err.message);
         // Fallback: Accept if verification fails due to technical reasons
