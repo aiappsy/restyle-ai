@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from '@google/genai';
+﻿import { GoogleGenAI, Type } from '@google/genai';
 
 let aiInstance = null;
 const getAi = () => {
@@ -77,7 +77,7 @@ Focus on naming exactly 4-6 key pieces of furniture or decor that we must buy to
 Return ONLY the text of the brief.`;
 
   const result = await getAi().models.generateContent({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-2.5-flash-image',
     contents: { parts: [{ text: prompt }] }
   });
   return result.text;
@@ -103,7 +103,7 @@ Return the result EXACTLY as a raw JSON array of objects with keys: name, price,
   onProgress({ type: 'status', message: 'Shopper is using Google Search to source items...' });
 
   const result = await getAi().models.generateContent({
-    model: 'gemini-2.5-pro',
+    model: 'gemini-2.5-flash-image',
     contents: {
       parts: [
         { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
@@ -146,7 +146,7 @@ Return the result EXACTLY as a raw JSON array of objects with keys: name, price,
       const mimeType = res.headers.get('content-type') || 'image/jpeg';
 
       const qaResult = await getAi().models.generateContent({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-2.5-flash-image',
         contents: {
           parts: [
             { inlineData: { data: base64, mimeType: mimeType } },
@@ -189,7 +189,7 @@ ${products.map((p, i) => `ID ${i}: ${p.name} (${p.category})`).join('\n')}
 Return the spatial map as a JSON array.`;
 
   const result = await getAi().models.generateContent({
-    model: "gemini-2.5-pro",
+    model: "gemini-2.5-flash-image",
     contents: {
       parts: [
         { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
@@ -257,7 +257,7 @@ RULES:
   if (rawProductParts.length > 0) {
     try {
       const synthResult = await getAi().models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-2.5-flash-image",
         contents: {
           parts: [
             ...rawProductParts,
@@ -344,7 +344,7 @@ export async function runIdentifyFurnitureAgent(input) {
   If nothing specific is there, return category: "Unknown".`;
 
   const result = await getAi().models.generateContent({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.5-flash-image",
     contents: {
       parts: [
         { inlineData: { data: base64Image.split(',')[1], mimeType: mimeType } },
@@ -395,7 +395,7 @@ CRITICAL RULES:
 Return the result EXACTLY as a raw JSON array of objects with keys: name, price, vendor, productUrl, imageUrl, category, reason, visualDescription. No markdown formatting.`;
 
     const result = await getAi().models.generateContent({
-      model: "gemini-2.5-pro",
+      model: "gemini-2.5-flash-image",
       contents: { parts: [{ text: prompt }] },
       tools: [{ googleSearch: {} }]
     });
@@ -436,7 +436,7 @@ Return the result EXACTLY as a raw JSON array of objects with keys: name, price,
         const mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
 
         const result = await getAi().models.generateContent({
-          model: 'gemini-1.5-flash',
+          model: 'gemini-2.5-flash-image',
           contents: {
             parts: [
               { inlineData: { data: base64, mimeType: mimeType } },
@@ -523,7 +523,7 @@ RULES:
   if (rawProductParts.length > 0) {
     try {
       const synthResult = await getAi().models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-2.5-flash-image",
         contents: {
           parts: [
             ...rawProductParts,
@@ -555,3 +555,4 @@ RULES:
   
   throw new Error("Failed to generate final image.");
 }
+
