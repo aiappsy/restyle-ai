@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+restyle.db*
+uploads/
+tmp_out.txt

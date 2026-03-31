@@ -15,7 +15,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
+
+// --- HEALTH CHECK ---
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 
 // --- IMAGE PROXY ---
 app.get('/api/proxy-image', async (req, res) => {
